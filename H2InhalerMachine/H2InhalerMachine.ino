@@ -1,6 +1,60 @@
 #include <Arduino.h>
 #include "driver/ledc.h"
 #include "ADS1X15.h"
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include <Update.h>
+
+const char* version = "v18.3.1";
+Preferences preferences;
+WebServer server(80);
+
+const char* ap_ssid = "ESP32_Setup";
+const char* ap_password = "12345678";
+
+const char* configPage =
+"<form action='/save' method='POST'>"
+"SSID: <input type='text' name='ssid'><br>"
+"Password: <input type='password' name='password'><br>"
+"<input type='submit' value='Save'>"
+"</form>";
+
+const char* otaPage = 
+"<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
+"<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
+"<input type='file' name='update'>"
+"<input type='submit' value='Update'>"
+"</form>"
+"<div id='prg'>progress: 0%</div>"
+"<script>"
+"$('form').submit(function(e){"
+"e.preventDefault();"
+"var form = $('#upload_form')[0];"
+"var data = new FormData(form);"
+" $.ajax({"
+"url: '/update',"
+"type: 'POST',"
+"data: data,"
+"contentType: false,"
+"processData:false,"
+"xhr: function() {"
+"var xhr = new window.XMLHttpRequest();"
+"xhr.upload.addEventListener('progress', function(evt) {"
+"if (evt.lengthComputable) {"
+"var per = evt.loaded / evt.total;"
+"$('#prg').html('progress: ' + Math.round(per*100) + '%');"
+"}"
+"}, false);"
+"return xhr;"
+"},"
+"success:function(d, s) {"
+"console.log('success!')" 
+"},"
+"error: function (a, b, c) {}"
+"});"
+"});"
+"</script>";
 
 // Pin definitions
 #define WATER_PUMP_PIN GPIO_NUM_4
@@ -18,9 +72,6 @@ HardwareSerial UART2(1);
 #define UART1_TX_PIN GPIO_NUM_43
 
 #define DEBOUNCE_TIME_MS 10
-
-const char* ssid = "IoTVision_2.4GHz";
-const char* password = "iotvision@2022";
 
 // ADS1115 instance
 ADS1115 ADS(0x48);
@@ -57,21 +108,13 @@ volatile bool limitsw_interruptFlag = false;
 volatile bool levelfloat_interruptFlag = false;
 volatile bool waterleak_interruptFlag = false;
 
-// PWM configuration
-// const int pwmPin = 16;         // PWM signal output pin
-// const int pwmFreq = 25000;     // PWM frequency
-// const int pwmResolution = 10;  // 10-bit resolution
-// const int pwmChannel = 0;      // PWM channel
 const int pwmPin = 16;        // PWM pin
 const int pwmFreq = 4000;     // PWM frequency
 const int pwmResolution = 13; // 13 bit
 const int pwmChannel = 1;     // PWM channel
-float _voltage = 4.8;
 
 float _Volfor100PercentH2 = 0;
 float _Volfor1000ppmTDS = 0;  // max sensor is 1000ppm
-
-uint32_t H2Value;
 
 #define SENSOR_READ_TIME 1000  // 1s
 uint32_t lastReadTimeSensor = 0;
@@ -143,27 +186,16 @@ void ads_setting() {
 }
 
 void updatePWMVoltage(float voltage) {
-  int dutyValue = map(voltage * 100, 470, 500, 1012, 1021);  // This number is adjusted for 4.8 - 5.0V because the graph is linear so use map
-  // Serial.printf("Ledc write %d\n",dutyValue);
-  ledcWrite(pwmPin, dutyValue);
 
-  _voltage = voltage;
-
-  if (voltage > 0) {
-    digitalWrite(WATER_PUMP_PIN, HIGH);
-    digitalWrite(AIR_PUMP_PIN, HIGH);
-  } else {
-    digitalWrite(WATER_PUMP_PIN, LOW);
-    digitalWrite(AIR_PUMP_PIN, LOW);
-  }
+  ledcWrite(pwmPin, voltage);
 }
 
-bool readH2Sensor() {
+bool readH2Sensor(uint32_t h2_val) {
   ADS.readADC(H2_SENSOR_ADS_CHANNEL);
   _ads_data.h2_data = ADS.getValue();
   float f = ADS.toVoltage(1);
-  uint32_t H2Value = (float)((_ads_data.h2_data * f) / _Volfor100PercentH2) * 100;
-  // H2Value = h2_val;
+  // uint32_t H2Value = (float)((_ads_data.h2_data * f) / _Volfor100PercentH2) * 100;
+  uint32_t H2Value = h2_val;
   Serial.print("H2 Value: ");
   Serial.print(H2Value);
   Serial.println("%");
@@ -176,13 +208,13 @@ bool readH2Sensor() {
   }
 }
 
-bool readTDS() {
+bool readTDS(uint32_t tds_val) {
   ADS.readADC(TDS_ADS_CHANNEL);
   _ads_data.tds_data = ADS.getValue();
 
   float f = ADS.toVoltage(1);
-  uint32_t tdsValue = (float)((_ads_data.tds_data * f) / _Volfor1000ppmTDS) * 1000;  // Convert _ads_data.tds_data -> tdsValue
-  // uint32_t tdsValue = tds_val;
+  // uint32_t tdsValue = (float)((_ads_data.tds_data * f) / _Volfor1000ppmTDS) * 1000;  // Convert _ads_data.tds_data -> tdsValue
+  uint32_t tdsValue = tds_val;
   Serial.print("TDS Value: ");
   Serial.print(tdsValue);
   Serial.println("ppm");
@@ -195,20 +227,20 @@ bool readTDS() {
   }
 }
 //------------------------------------------
-// void handleSerialCommands() {
-//   if (Serial.available()) {
-//     String receivedData = Serial.readStringUntil('\n');
-//     receivedData.trim();
+void handleSerialCommands() {
+  if (Serial.available()) {
+    String receivedData = Serial.readStringUntil('\n');
+    receivedData.trim();
 
-//     if (receivedData.startsWith("H2:")) {
-//       h2_percent = receivedData.substring(3);  // "H2:"
-//       Serial.printf("H2: %d\n", h2_percent.toInt());
-//     } else if (receivedData.startsWith("TDS:")) {
-//       tds_data = receivedData.substring(4);  // "TDS:"
-//       Serial.printf("TDS: %d\n", tds_data.toInt());
-//     }
-//   }
-// }
+    if (receivedData.startsWith("H2:")) {
+      h2_percent = receivedData.substring(3);  // "H2:"
+      Serial.printf("H2: %d\n", h2_percent.toInt());
+    } else if (receivedData.startsWith("TDS:")) {
+      tds_data = receivedData.substring(4);  // "TDS:"
+      Serial.printf("TDS: %d\n", tds_data.toInt());
+    }
+  }
+}
 
 
 // Note : If H2 = 0 meaning Pause/Timeout wait until Resume/Start
@@ -216,6 +248,7 @@ bool readTDS() {
 int flow;
 int selectedEquation;
 float airFlowRate;
+bool _run = false;
 void handleKnobCommand() {
   // Keep reading data until a value greater than 0 is received
   do {
@@ -224,11 +257,16 @@ void handleKnobCommand() {
         Serial.print("Received data from Knob: ");
         Serial.println(receivedData);
         flow = receivedData.toInt();
+        _run = true;
       }
       int dutyValue;
       if (flow == 0)
       {
         updatePWMVoltage(0);
+        Serial.println("Flow is 0. Stopping PWM.");
+        _run = false;
+        if (h2 && tds && !levelfloat_interruptFlag && !limitsw_interruptFlag && !waterleak_interruptFlag) // Khi hết lỗi -> knob yêu cầu pwm trở về 0 -> cần gửi lại lệnh reset
+          UART2.println("X");
       }
       else if (flow >= 10 && flow <= 20) //OK
       {
@@ -339,11 +377,90 @@ void handleKnobCommand() {
     delay(1000);
   } while (flow == 0);  // Continue waiting if flow is 0
 }
+
+
+void OTA_task(void *param) {
+  for (;;) {
+    server.handleClient();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void Serial_Handle_task(void *param) {
+  for (;;) {
+    // Serial.println("Serial task");
+    handleSerialCommands();
+    handleKnobCommand();
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+void loop_task(void *param) {
+  for (;;) {
+    if (limitsw_interruptFlag) {
+      if (!digitalRead(LIMIT_SW_PIN)) {
+        updatePWMVoltage(0);
+        send_error_to_Knob(HEPA_FILTER_MISSING);
+        delay(1000);
+      } else {
+        limitsw_interruptFlag = false;
+      }
+    }
+
+    if(waterleak_interruptFlag) {
+      delay(50);
+      if (digitalRead(WATER_LEAK_PIN)) {
+        updatePWMVoltage(0);
+        send_error_to_Knob(WATER_LEAK_DETECTED);
+        delay(1000);
+      } else {
+        waterleak_interruptFlag = false;
+      }
+    }
+
+    if (levelfloat_interruptFlag) {
+      if (!digitalRead(LEVEL_FLOAT_PIN)) {
+          updatePWMVoltage(0);
+          send_error_to_Knob(FLOAT_DETECTED);
+          delay(1000);
+      }
+      else {
+        levelfloat_interruptFlag = false;
+      }
+    }
+
+    if (millis() - lastReadTimeSensor > SENSOR_READ_TIME) {
+      lastReadTimeSensor = millis();
+      h2 = readH2Sensor(h2_percent.toInt());
+      tds = readTDS(tds_data.toInt());
+
+      if (!tds) {
+        send_error_to_Knob(POOR_WATER_QUALITY);
+        delay(1000);
+      }
+      if (!h2) {
+        send_error_to_Knob(H2_ABOVE_1_PERCENT);
+        delay(1000);
+      }
+
+      // bật khi các cảm biến không lỗi và pwm H2 > 0 
+      if (h2 && tds && !levelfloat_interruptFlag && !limitsw_interruptFlag && !waterleak_interruptFlag && _run) {
+        digitalWrite(WATER_PUMP_PIN, 1);
+        digitalWrite(AIR_PUMP_PIN, 1);
+      } else {
+        digitalWrite(WATER_PUMP_PIN, 0);
+        digitalWrite(AIR_PUMP_PIN, 0);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
 //------------------------------------------
 void setup() {
   Serial.begin(115200);
   ledcAttach(pwmPin, pwmFreq, pwmResolution);
-  updatePWMVoltage(_voltage);
+  updatePWMVoltage(0);
 
   pinMode(WATER_PUMP_PIN, OUTPUT);
   pinMode(AIR_PUMP_PIN, OUTPUT);
@@ -362,70 +479,95 @@ void setup() {
   UART2.begin(9600, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
   Wire.begin(I2C_SCL_PIN, I2C_SDA_PIN);
   ads_setting();
+  Serial.print("Version");
+  Serial.println(version);
+  UART2.println(version);
 
   _Volfor100PercentH2 = ADS.getMaxVoltage();  // Need to change if max voltage is not 100% H2
   _Volfor1000ppmTDS = ADS.getMaxVoltage();    // Need to change if max voltage is not 1000ppm TDS
 
+  preferences.begin("wifi_config", false);
+  String stored_ssid = preferences.getString("ssid", "");
+  String stored_password = preferences.getString("password", "");
+
+  if (stored_ssid.length() > 0) {
+    WiFi.begin(stored_ssid.c_str(), stored_password.c_str());
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nConnected to WiFi!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("\nWiFi connection failed, switching to AP mode...");
+    }
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.softAP(ap_ssid, ap_password);
+    Serial.println("Access Point started. Connect to 'ESP32_Setup' and go to 192.168.4.1");
+  }
+
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", WiFi.status() == WL_CONNECTED ? otaPage : configPage);
+  });
+
+  server.on("/save", HTTP_POST, []() {
+    String new_ssid = server.arg("ssid");
+    String new_password = server.arg("password");
+    if (new_ssid.length() > 0 && new_password.length() > 0) {
+      preferences.putString("ssid", new_ssid);
+      preferences.putString("password", new_password);
+      server.send(200, "text/html", "Saved! Restarting ESP32...");
+      delay(1000);
+      ESP.restart();
+    } else {
+      server.send(400, "text/html", "Invalid input. Try again.");
+    }
+  });
+
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Serial.printf("Update: %s\n", upload.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+      } else {
+        Update.printError(Serial);
+      }
+    }
+  });
+
+  server.begin();
+  xTaskCreate(OTA_task, "OTA_task", 4096, NULL, 5, NULL);
+  xTaskCreate(Serial_Handle_task, "Serial_Handle_task", 4096, NULL, 5, NULL);
+  xTaskCreate(loop_task, "loop_task", 8192, NULL, 6, NULL);
+
 }
 
 void loop() {
-  // handleSerialCommands();
-  handleKnobCommand();
-  if (limitsw_interruptFlag) {
-    if (!digitalRead(LIMIT_SW_PIN)) {
-      updatePWMVoltage(0);
-      send_error_to_Knob(HEPA_FILTER_MISSING);
-      delay(1000);
-    } else {
-      limitsw_interruptFlag = false;
-    }
-  }
-
-  if(waterleak_interruptFlag) {
-    delay(50);
-    if (digitalRead(WATER_LEAK_PIN)) {
-      updatePWMVoltage(0);
-      send_error_to_Knob(WATER_LEAK_DETECTED);
-      delay(1000);
-    } else {
-      waterleak_interruptFlag = false;
-    }
-  }
-
-  if (levelfloat_interruptFlag) {
-    if (!digitalRead(LEVEL_FLOAT_PIN)) {
-        updatePWMVoltage(0);
-        send_error_to_Knob(FLOAT_DETECTED);
-        delay(1000);
-    }
-    else {
-      levelfloat_interruptFlag = false;
-    }
-  }
-
-  if (millis() - lastReadTimeSensor > SENSOR_READ_TIME) {
-    lastReadTimeSensor = millis();
-    h2 = readH2Sensor();
-    tds = readTDS();
-
-    if (!tds) {
-      send_error_to_Knob(POOR_WATER_QUALITY);
-      delay(1000);
-    }
-    if (!h2) {
-      send_error_to_Knob(H2_ABOVE_1_PERCENT);
-      delay(1000);
-    }
-
-    if (h2 && tds && !levelfloat_interruptFlag && !limitsw_interruptFlag && !waterleak_interruptFlag) {
-      digitalWrite(WATER_PUMP_PIN, 1);
-      digitalWrite(AIR_PUMP_PIN, 1);
-      UART2.println("X");
-
-    } else {
-      digitalWrite(WATER_PUMP_PIN, 0);
-      digitalWrite(AIR_PUMP_PIN, 0);
-    }
-  }
   delay(1);
 }
+
+/*
+Vừa khởi động xong: Relay tắt, PWM = 0
+Khi hoạt động: PWM ứng với Flow (Từ Knob), Relay sáng 
+Có lỗi: Knob hiện lỗi, Relay tắt, PWM = 0
+Hết lỗi: Knob về main, Relay tắt, PWM = 0
+
+*/
