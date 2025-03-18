@@ -6,7 +6,63 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 
+//==================================================================================================
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include <Update.h>
 
+const char* version = "v18.3.2";
+Preferences preferences;
+WebServer server(80);
+
+const char* ap_ssid = "ESP32_Setup";
+const char* ap_password = "12345678";
+
+const char* configPage =
+"<form action='/save' method='POST'>"
+"SSID: <input type='text' name='ssid'><br>"
+"Password: <input type='password' name='password'><br>"
+"<input type='submit' value='Save'>"
+"</form>";
+
+const char* otaPage = 
+"<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
+"<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
+"<input type='file' name='update'>"
+"<input type='submit' value='Update'>"
+"</form>"
+"<div id='prg'>progress: 0%</div>"
+"<script>"
+"$('form').submit(function(e){"
+"e.preventDefault();"
+"var form = $('#upload_form')[0];"
+"var data = new FormData(form);"
+" $.ajax({"
+"url: '/update',"
+"type: 'POST',"
+"data: data,"
+"contentType: false,"
+"processData:false,"
+"xhr: function() {"
+"var xhr = new window.XMLHttpRequest();"
+"xhr.upload.addEventListener('progress', function(evt) {"
+"if (evt.lengthComputable) {"
+"var per = evt.loaded / evt.total;"
+"$('#prg').html('progress: ' + Math.round(per*100) + '%');"
+"}"
+"}, false);"
+"return xhr;"
+"},"
+"success:function(d, s) {"
+"console.log('success!')" 
+"},"
+"error: function (a, b, c) {}"
+"});"
+"});"
+"</script>";
+
+//==================================================================================================
 #ifdef KNOB21
 #define GPIO_NUM_KNOB_PIN_A     6
 #define GPIO_NUM_KNOB_PIN_B     5
@@ -21,6 +77,9 @@
 #ifdef KNOB
 #include <ESP_Knob.h>
 #include <Button.h>
+
+ESP_Knob *knob;
+#endif
 #include <ui.h>
 #include <HardwareSerial.h>
 #define TIMER_MAX_LENGTH 10
@@ -29,7 +88,6 @@ HardwareSerial MySerial(1);
 
 uint8_t savedDataToSend = false;
 float percentH2FromKnob;
-float h2FlowRate;
 float airFlowRate = 10;   // 10L/min
 char timerFromKnob[10] = "00:00:00";
 bool isErrorScreenActive = false;
@@ -37,15 +95,10 @@ TaskHandle_t countdown_task_handle = NULL;
 bool stop_countdown_flag = false;
 uint8_t error_flag = false;
 extern knob_state_t knob_state;
-
-
 extern countdown_state_t countdown_state;
-static hw_timer_t* timer;
-int hour;
-int minute;
-int second;
+//=====================================================================
 
-ESP_Knob *knob;
+//=====================================================================
 
 void onKnobLeftEventCallback(int count, void *usr_data)
 {
@@ -76,9 +129,7 @@ static void LongPressHoldCb(void *button_handle, void *usr_data) {
   lvgl_port_unlock();
 }
 
-String receivedString; // Variable that receive data via Serial
-
-#endif
+// String receivedString; // Variable that receive data via Serial
 
 //==================================================Begin - NVS===================================================
 void save_data_to_nvs(char *timer, float *_h2_percent) {
@@ -197,7 +248,7 @@ void update_display(int hour, int minute, int second) {
     lv_label_set_text(label_time, timerFromKnob);
 
     // Cập nhật Arc chỉ theo giờ
-    lv_arc_set_value(arc, hour);
+    // lv_arc_set_value(arc, hour);
 }
 
 void start_countdown() {
@@ -237,39 +288,56 @@ void stop_countdown() {
   
 }
 
+const int MAX_LENGTH = 30;  // Kích thước tối đa của mảng char
+char receivedDataArray[MAX_LENGTH];  // Mảng lưu dữ liệu
+
 void handleReceivedData(const String& data) {
   lvgl_port_lock(-1);
 
-  if (data.length() == 0 || data == "X" || containsSpecialChar(data)) {  // Không có lỗi
-    if (isErrorScreenActive) {  // Nếu đang ở màn hình lỗi thì mới chuyển về ui_main
-      isErrorScreenActive = false; 
+  // Chuyển String thành mảng char[]
+  strncpy(receivedDataArray, data.c_str(), MAX_LENGTH - 1);
+  receivedDataArray[MAX_LENGTH - 1] = '\0';  // Đảm bảo chuỗi kết thúc đúng
+
+  Serial.print("Received Data as char array: ");
+  Serial.println(receivedDataArray);  // In ra để kiểm tra
+
+  // Kiểm tra xem có "v" trong chuỗi không (để cập nhật version)
+  char* vPos = strchr(receivedDataArray, 'v');
+  if (vPos != nullptr) {
+    strncpy(versionBoard, vPos, sizeof(versionBoard) - 1);
+    versionBoard[sizeof(versionBoard) - 1] = '\0';  // Đảm bảo chuỗi kết thúc
+
+    Serial.print("Extracted version: ");
+    Serial.println(versionBoard);
+  }
+
+  // Kiểm tra và xử lý dữ liệu lỗi
+  if (strlen(receivedDataArray) == 0 || strcmp(receivedDataArray, "X") == 0 || containsSpecialChar(receivedDataArray)) {
+    if (isErrorScreenActive) {
+      isErrorScreenActive = false;
       error_flag = false;
       switch_ui(ui_main, label_notice);
       reset_ui();
 
       strcpy(timerFromKnob, "00:00:00");
       lv_label_set_text(label_time, timerFromKnob);
-      percentH2FromKnob = 0.0;
-      savedDataToSend = true;
       exchange_H2Percent();
       lv_label_set_text(label_percent, percentH2_str);
     }
-  } 
-  else {  // Có lỗi mới
-    if (!isErrorScreenActive) {  // Nếu chưa ở màn hình lỗi thì mới chuyển
+  } else { 
+    if (!isErrorScreenActive) {
       isErrorScreenActive = true;
       switch_ui(ui_display_error, label_error_message);
       stop_countdown();
       knob_state = ERROR;
       error_flag = true;
     }
-    lv_label_set_text(label_error_message, data.c_str());  // Cập nhật lỗi
-    
-    
+    lv_label_set_text(label_error_message, receivedDataArray);
   }
 
   lvgl_port_unlock();
 }
+
 
 void Receive_task(void *param) {
   for (;;) {
@@ -303,8 +371,6 @@ void Send_task(void *param) {
 void Send_data_to_board(void) {
   if (percentH2FromKnob != -1){
     MySerial.print((percentH2FromKnob *(airFlowRate * 1000)) / 100);
-    // MySerial.print(",");
-    // MySerial.print(selectedEquation);
   }
 }
 
@@ -318,10 +384,17 @@ bool containsSpecialChar(const String &str) {
     return false;  // Không có ký tự đặc biệt
 }
 
+void OTA_task(void *param) {
+  for (;;) {
+    server.handleClient();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
 
 void setup()
 {
-    String title = "LVGL porting example";
+    const char* title = "LVGL porting example";
 #ifdef IM
     pinMode(IM1, OUTPUT);
     digitalWrite(IM1, HIGH);
@@ -337,7 +410,7 @@ void setup()
 
     Serial.begin(115200);
     MySerial.begin(9600, SERIAL_8N1, 20, 21);
-    Serial.println(title + " start");
+    // Serial.println(title + " start");
 
     Serial.println("Initialize panel device");
     ESP_Panel *panel = new ESP_Panel();
@@ -368,25 +441,98 @@ void setup()
 
 #endif
 
-    Serial.println("Initialize LVGL");
-    lvgl_port_init(panel->getLcd(), panel->getTouch());
+  Serial.println("Initialize LVGL");
+  lvgl_port_init(panel->getLcd(), panel->getTouch());
 
-    Serial.println("Create UI");
-    /* Lock the mutex due to the LVGL APIs are not thread-safe */
-    lvgl_port_lock(-1);
+  Serial.println("Create UI");
+  /* Lock the mutex due to the LVGL APIs are not thread-safe */
+  lvgl_port_lock(-1);
 
-    ui_init();
+  ui_init();
 
-    /* Release the mutex */
-    lvgl_port_unlock();
-    nvs_flash_init();
-    Serial.println(title + " end");
+  /* Release the mutex */
+  lvgl_port_unlock();
+  nvs_flash_init();
+  // Serial.println(title + " end");
 
-    xTaskCreate(Receive_task, "Receive_task", 10000, NULL, 6, NULL);
-    xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
+  preferences.begin("wifi_config", false);
+  String stored_ssid = preferences.getString("ssid", "");
+  String stored_password = preferences.getString("password", "");
+
+  if (stored_ssid.length() > 0) {
+    WiFi.begin(stored_ssid.c_str(), stored_password.c_str());
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nConnected to WiFi!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("\nWiFi connection failed, switching to AP mode...");
+    }
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.softAP(ap_ssid, ap_password);
+    Serial.println("Access Point started. Connect to 'ESP32_Setup' and go to 192.168.4.1");
+  }
+
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", WiFi.status() == WL_CONNECTED ? otaPage : configPage);
+  });
+
+  server.on("/save", HTTP_POST, []() {
+    String new_ssid = server.arg("ssid");
+    String new_password = server.arg("password");
+    if (new_ssid.length() > 0 && new_password.length() > 0) {
+      preferences.putString("ssid", new_ssid);
+      preferences.putString("password", new_password);
+      server.send(200, "text/html", "Saved! Restarting ESP32...");
+      delay(1000);
+      ESP.restart();
+    } else {
+      server.send(400, "text/html", "Invalid input. Try again.");
+    }
+  });
+
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Serial.printf("Update: %s\n", upload.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+      } else {
+        Update.printError(Serial);
+      }
+    }
+  });
+
+  server.begin();
+  Serial.print("Version Knob: ");
+  Serial.println(version);
+
+
+  xTaskCreate(Receive_task, "Receive_task", 10000, NULL, 6, NULL);
+  xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
+  xTaskCreate(OTA_task, "OTA_task", 4096, NULL, 5, NULL);
 }
 
 void loop()
 {
-  delay(10);
+  delay(1);
 }
