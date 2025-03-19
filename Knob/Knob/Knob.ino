@@ -480,8 +480,149 @@ void setup() {
   
   // Tạo task OTA
   xTaskCreate(OTA_Task, "OTA_Task", 8192, NULL, 10, NULL);
+  xTaskCreate(Receive_task, "Receive_task", 10000, NULL, 6, NULL);
+  xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
+
 }
 
 void loop() {
   // Không làm gì ở đây, mọi xử lý nằm trong task OTA_Task
+}
+
+void handleReceivedData(const String &data) {
+  lvgl_port_lock(-1);
+
+  if (data.indexOf("v") != -1) {
+    int index = data.indexOf("v");           // Tìm vị trí của 'v'
+    String version = data.substring(index);  // Cắt chuỗi từ 'v' trở đi
+    version.trim();                          // Loại bỏ ký tự xuống dòng, khoảng trắng
+
+    // Sao chép vào mảng versionBoard
+    strncpy(versionBoard, version.c_str(), sizeof(versionBoard) - 1);
+    versionBoard[sizeof(versionBoard) - 1] = '\0';  // Đảm bảo kết thúc chuỗi
+
+    Serial.print("Extracted version: ");
+    Serial.println(versionBoard);
+    return;
+  }
+
+  if (data.startsWith("IP:")) {
+    String ipAddress_str = data.substring(3);
+    strncpy(ip_address, ipAddress_str.c_str(), sizeof(ip_address));
+    ip_address[sizeof(ip_address) - 1] = '\0';
+
+    Serial.print("Received IP: ");
+    Serial.println(ip_address);
+    return;
+  }
+
+  if (data.length() == 0 || data == "X" || containsSpecialChar(data)) {  // Không có lỗi
+    if (isErrorScreenActive) {                                           // Nếu đang ở màn hình lỗi thì mới chuyển về ui_main
+      isErrorScreenActive = false;
+      error_flag = false;
+      switch_ui(ui_main, label_notice);
+      reset_ui();
+
+      strcpy(timerFromKnob, "00:00:00");
+      lv_label_set_text(label_time, timerFromKnob);
+      // percentH2FromKnob = 0.0;
+      // savedDataToSend = true;
+      exchange_H2Percent();
+      lv_label_set_text(label_percent, percentH2_str);
+    }
+  } else {                       // Có lỗi mới
+    if (!isErrorScreenActive) {  // Nếu chưa ở màn hình lỗi thì mới chuyển
+      isErrorScreenActive = true;
+      switch_ui(ui_display_error, label_error_message);
+      stop_countdown();
+      knob_state = ERROR;
+      error_flag = true;
+    }
+    lv_label_set_text(label_error_message, data.c_str());  // Cập nhật lỗi
+  }
+
+  lvgl_port_unlock();
+}
+
+void Receive_task(void *param) {
+  bool updating = false;  // Trạng thái OTA
+  size_t totalReceived = 0;
+
+  for (;;) {
+    lvgl_port_lock(-1);
+
+    String receivedString = OtaSerial.readStringUntil('\n');
+    receivedString.trim();
+    Serial.println("[Knob] " + receivedString);  // Xử lý dữ liệu bình thường
+    handleReceivedData(receivedString);
+    
+    if (OtaSerial.available() && knobState == KNOB_IDLE) {
+      String receivedString = OtaSerial.readStringUntil('\n');
+      receivedString.trim();
+      if (receivedString == "START") {
+        Serial.println("[Knob] Receiving firmware...");
+        if (Update.begin(UPDATE_SIZE_UNKNOWN)) {
+          updating = true;
+          totalReceived = 0;
+        } else {
+          Serial.println("[Knob] Update.begin() failed!");
+          updating = false;
+        }
+      } 
+      else if (receivedString == "END") {
+        if (updating && Update.end(true)) {
+          Serial.println("[Knob] Update Success! Rebooting...");
+          ESP.restart();
+        } else {
+          Serial.println("[Knob] Update Failed!");
+        }
+        updating = false;
+      } 
+      else if (updating) {
+        int len = receivedString.length();
+        if (Update.write((uint8_t*)receivedString.c_str(), len) == len) {
+          totalReceived += len;
+          Serial.printf("[Knob] Received %d bytes...\n", totalReceived);
+        } else {
+          Serial.println("[Knob] Update.write() failed!");
+          updating = false;
+        }
+      } 
+      else {
+      }
+    }
+    
+    lvgl_port_unlock();
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+void Send_task(void *param) {
+  for (;;) {
+
+    if (savedDataToSend && knobState == KNOB_IDLE) {
+      lvgl_port_lock(-1);
+      Send_data_to_board();
+      savedDataToSend = false;
+      lvgl_port_unlock();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void Send_data_to_board(void) {
+  if (percentH2FromKnob != -1) {
+    OtaSerial.print((percentH2FromKnob * (airFlowRate * 1000)) / 100);
+  }
+}
+
+bool containsSpecialChar(const String &str) {
+  for (size_t i = 0; i < str.length(); i++) {
+    char c = str[i];
+    if (!isalnum(c) && c != ' ' && c != '_') {
+      return true;  // Có ký tự đặc biệt
+    }
+  }
+  return false;  // Không có ký tự đặc biệt
 }
