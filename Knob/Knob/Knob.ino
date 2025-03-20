@@ -7,7 +7,7 @@
 #include "nvs.h"
 #include <Update.h>
 
-#define VERSION "v19.3.2"
+#define VERSION "v20.3.3"
 
 //==================================================================================================
 #ifdef KNOB21
@@ -298,6 +298,7 @@ void processCommand() {
         OtaSerial.read();
       }    
       OtaSerial.println("READY");
+      OtaSerial.println("READY");
       DEBUG_SERIAL.println("Send READY to Knob");
     } else {
       OtaSerial.println("ERR:INIT_FAIL");
@@ -306,6 +307,7 @@ void processCommand() {
   else if (commandBuffer == "OTA_END") {
     if (Update.end(true)) {
       OtaSerial.println("OTA_SUCCESS");
+      delay(3000);
       ESP.restart();
     } else {
       OtaSerial.println("ERR:END_FAIL");
@@ -467,12 +469,12 @@ void setup() {
   lvgl_port_init(panel->getLcd(), panel->getTouch());
   lvgl_port_lock(-1);
   ui_init();
-  lvgl_port_unlock();
-
 
   DEBUG_SERIAL.begin(115200);
   DEBUG_SERIAL.print("VERSION");
   DEBUG_SERIAL.println(VERSION);
+  snprintf(versionKnob, sizeof(versionKnob), "%s", VERSION);
+
   // Cấu hình OtaSerial: thay đổi các chân RX, TX theo board của bạn (ví dụ: 20, 21)
   OtaSerial.begin(460800, SERIAL_8N1, 20, 21);
   nvs_flash_init();
@@ -480,8 +482,9 @@ void setup() {
   
   // Tạo task OTA
   xTaskCreate(OTA_Task, "OTA_Task", 8192, NULL, 10, NULL);
-  xTaskCreate(Receive_task, "Receive_task", 10000, NULL, 6, NULL);
+  xTaskCreate(Receive_task, "Receive_task", 8192, NULL, 10, NULL);
   xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
+  lvgl_port_unlock();
 
 }
 
@@ -503,7 +506,6 @@ void handleReceivedData(const String &data) {
 
     Serial.print("Extracted version: ");
     Serial.println(versionBoard);
-    return;
   }
 
   if (data.startsWith("IP:")) {
@@ -513,7 +515,6 @@ void handleReceivedData(const String &data) {
 
     Serial.print("Received IP: ");
     Serial.println(ip_address);
-    return;
   }
 
   if (data.length() == 0 || data == "X" || containsSpecialChar(data)) {  // Không có lỗi
@@ -550,56 +551,20 @@ void Receive_task(void *param) {
 
   for (;;) {
     lvgl_port_lock(-1);
-
-    String receivedString = OtaSerial.readStringUntil('\n');
-    receivedString.trim();
-    Serial.println("[Knob] " + receivedString);  // Xử lý dữ liệu bình thường
-    handleReceivedData(receivedString);
-    
-    if (OtaSerial.available() && knobState == KNOB_IDLE) {
+    if(KNOB_IDLE == knob_state)
+    {
       String receivedString = OtaSerial.readStringUntil('\n');
       receivedString.trim();
-      if (receivedString == "START") {
-        Serial.println("[Knob] Receiving firmware...");
-        if (Update.begin(UPDATE_SIZE_UNKNOWN)) {
-          updating = true;
-          totalReceived = 0;
-        } else {
-          Serial.println("[Knob] Update.begin() failed!");
-          updating = false;
-        }
-      } 
-      else if (receivedString == "END") {
-        if (updating && Update.end(true)) {
-          Serial.println("[Knob] Update Success! Rebooting...");
-          ESP.restart();
-        } else {
-          Serial.println("[Knob] Update Failed!");
-        }
-        updating = false;
-      } 
-      else if (updating) {
-        int len = receivedString.length();
-        if (Update.write((uint8_t*)receivedString.c_str(), len) == len) {
-          totalReceived += len;
-          Serial.printf("[Knob] Received %d bytes...\n", totalReceived);
-        } else {
-          Serial.println("[Knob] Update.write() failed!");
-          updating = false;
-        }
-      } 
-      else {
-      }
+      Serial.println("[Knob] " + receivedString);  // Xử lý dữ liệu bình thường
+      handleReceivedData(receivedString);
     }
-    
     lvgl_port_unlock();
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
 
 void Send_task(void *param) {
   for (;;) {
-
     if (savedDataToSend && knobState == KNOB_IDLE) {
       lvgl_port_lock(-1);
       Send_data_to_board();

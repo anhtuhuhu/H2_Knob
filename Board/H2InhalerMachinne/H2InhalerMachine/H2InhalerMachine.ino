@@ -6,9 +6,12 @@
 #include "ADS1X15.h"
 #include "driver/ledc.h"
 
+
+#define VERSION "v20.3.3"
+
 // WiFi credentials
-const char* ssid = "Anonymous";
-const char* password = "0967375057abc";
+const char* ssid = "IoTVision_2.4GHz";
+const char* password = "iotvision@2022";
 
 // WebServer instance
 WebServer server(80);
@@ -35,7 +38,7 @@ void handleRoot();
 void handleUpdate();
 void handleUpload();
 void sendChunkToKnob(uint8_t* data, size_t len);
-bool waitForKnobResponse(const char* expected, uint32_t timeout = 1000);
+bool waitForKnobResponse(const char* expected, uint32_t timeout = 3000);
 
 
 //==================================================================================================
@@ -230,7 +233,7 @@ bool _run = false;
 void handleKnobCommand() {
   // Keep reading data until a value greater than 0 is received
   do {
-    if(otaState != OTA_IDLE || otaState != OTA_END)
+    if(otaState != OTA_IDLE)
       break;
     if (UART2.available()) {
         String receivedData = UART2.readStringUntil('\n');  // Read data from UART2
@@ -372,6 +375,7 @@ void OTA_task(void *param) {
         } else if (response == "OTA_SUCCESS" && otaState == OTA_END) {
           otaState = OTA_IDLE;
           Serial.println("Knob OTA successful!");
+          ESP.restart();
         } else if (response.startsWith("ERR")) {
           Serial.println("Knob OTA failed: " + response);
           otaState = OTA_IDLE;
@@ -383,7 +387,7 @@ void OTA_task(void *param) {
 
 void Serial_Handle_task(void *param) {
   for (;;) {
-    if(OTA_IDLE == otaState || otaState == OTA_END)
+    if(OTA_IDLE == otaState)
     {
       // Serial.println("Serial task");
       handleSerialCommands();
@@ -396,7 +400,7 @@ void Serial_Handle_task(void *param) {
 
 void warning_Handle_Task(void *param) {
   for (;;) {
-    if(OTA_IDLE == otaState || otaState == OTA_END)
+    if(OTA_IDLE == otaState)
     {
       if (limitsw_interruptFlag) {
         if (!digitalRead(LIMIT_SW_PIN)) {
@@ -497,6 +501,16 @@ void setup() {
   Serial.println("\nConnected to WiFi!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+
+  // delay(1000);
+  UART2.println(VERSION);
+  delay(1000);
+  char ip_address[20];
+  snprintf(ip_address, sizeof(ip_address), "%d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+  Serial.print("ip_address: ");
+  Serial.println(ip_address);
+  UART2.println("IP:" + String(ip_address));
+  // delay(1000);
 
   // Configure WebServer routes
   server.on("/", handleRoot);
@@ -713,7 +727,7 @@ void sendChunkToKnob(uint8_t* data, size_t len) {
   // Gửi dữ liệu firmware
   UART2.write(data, len);
   
-  if (!waitForKnobResponse("OK", 1000)) {
+  if (!waitForKnobResponse("OK", 3000)) {
     Serial.println("Failed to send chunk to Knob!");
     server.send(500, "text/plain", "Failed to send chunk to Knob!");
     return;
@@ -735,3 +749,4 @@ bool waitForKnobResponse(const char* expected, uint32_t timeout) {
   }
   return false;
 }
+
