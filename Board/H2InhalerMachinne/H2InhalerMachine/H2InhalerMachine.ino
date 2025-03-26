@@ -6,12 +6,11 @@
 #include "ADS1X15.h"
 #include "driver/ledc.h"
 
-
-#define VERSION "v20.3.3"
+#define VERSION "v20.3.5"
 
 // WiFi credentials
-const char* ssid = "IoTVision_2.4GHz";
-const char* password = "iotvision@2022";
+const char* ssid = "Redmi K70 Pro";
+const char* password = "1428782871qzj";
 
 // WebServer instance
 WebServer server(80);
@@ -361,30 +360,6 @@ void handleKnobCommand() {
   } while (flow == 0 );  // Continue waiting if flow is 0
 }
 
-void OTA_task(void *param) {
-  for (;;) {
-    server.handleClient();
-    // Handle OTA state for Knob via UART responses
-    if (otaState == OTA_WAIT_READY || otaState == OTA_SENDING || otaState == OTA_END) {
-      if (UART2.available()) {
-        String response = UART2.readStringUntil('\n');
-        response.trim();
-        if (response == "READY" && otaState == OTA_WAIT_READY) {
-          otaState = OTA_SENDING;
-          Serial.println("Knob is ready for OTA");
-        } else if (response == "OTA_SUCCESS" && otaState == OTA_END) {
-          otaState = OTA_IDLE;
-          Serial.println("Knob OTA successful!");
-          ESP.restart();
-        } else if (response.startsWith("ERR")) {
-          Serial.println("Knob OTA failed: " + response);
-          otaState = OTA_IDLE;
-        }
-      }
-    }
-  }
-}
-
 void Serial_Handle_task(void *param) {
   for (;;) {
     if(OTA_IDLE == otaState)
@@ -467,6 +442,8 @@ void setup() {
   Serial.begin(115200);
   UART2.begin(460800, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
 
+  delay(200);  
+
   ledcAttach(pwmPin, pwmFreq, pwmResolution);
   updatePWMVoltage(0);
 
@@ -490,7 +467,6 @@ void setup() {
   _Volfor100PercentH2 = ADS.getMaxVoltage();  // Need to change if max voltage is not 100% H2
   _Volfor1000ppmTDS = ADS.getMaxVoltage();    // Need to change if max voltage is not 1000ppm TDS
 
-
   // Connect to WiFi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi...");
@@ -499,18 +475,22 @@ void setup() {
     Serial.print(".");
   }
   Serial.println("\nConnected to WiFi!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  while (WiFi.localIP() == INADDR_NONE) {
+    Serial.println("Waiting for IP...");
+    delay(500);
+  }
 
-  // delay(1000);
+  delay(1000);
+  UART2.print("\n");
+  delay(1000);
   UART2.println(VERSION);
   delay(1000);
   char ip_address[20];
   snprintf(ip_address, sizeof(ip_address), "%d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
   Serial.print("ip_address: ");
   Serial.println(ip_address);
-  UART2.println("IP:" + String(ip_address));
-  // delay(1000);
+  UART2.print("IP:" + String(ip_address)+"\n");
+  delay(1000);
 
   // Configure WebServer routes
   server.on("/", handleRoot);
@@ -519,7 +499,6 @@ void setup() {
   server.begin();
   Serial.println("HTTP server started");
 
-  // xTaskCreate(OTA_task, "OTA_task", 10000, NULL, 0, NULL);
   xTaskCreate(Serial_Handle_task, "Serial_Handle_task", 4096, NULL, 6, &serialTaskHandle);
   xTaskCreate(warning_Handle_Task, "warning_Handle_Task", 8192, NULL, 6, &warningTaskHandle);
 }
@@ -539,6 +518,14 @@ void loop() {
       else if (response == "OTA_SUCCESS" && otaState == OTA_END) {
         otaState = OTA_IDLE;
         Serial.println("Knob OTA successful!");
+        delay(4000);
+        Serial.println("Send version and IP");
+        UART2.println(VERSION);
+        delay(1000);
+        char ip_address[20];
+        snprintf(ip_address, sizeof(ip_address), "%d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+        UART2.println("IP:" + String(ip_address));
+        delay(1000);
       } 
       else if (response.startsWith("ERR")) {
         Serial.println("Knob OTA failed: " + response);
@@ -607,6 +594,8 @@ void handleUpdate() {
 
   // Nếu target là Controller thì restart ngay, nếu là Knob thì chờ xác nhận qua UART
   if (currentTarget == "Controller") {
+    UART2.println("RESET");
+    delay(500);
     ESP.restart();
   }
 }
@@ -720,6 +709,7 @@ void sendChunkToKnob(uint8_t* data, size_t len) {
   uint32_t crc = crc32(data, len);
   
   // Gửi marker, kích thước và CRC (mỗi giá trị 4 byte)
+  UART2.flush(); 
   UART2.write((uint8_t*)&marker, sizeof(marker));
   UART2.write((uint8_t*)&len, sizeof(len));
   UART2.write((uint8_t*)&crc, sizeof(crc));

@@ -1,0 +1,15 @@
+{
+    "files.associations": {
+        "ui.h": "c",
+        "ui_helpers.h": "c",
+        "compare": "c",
+        "cstddef": "c",
+        "limits": "c",
+        "type_traits": "c",
+        "vector": "c",
+        "xmemory": "c",
+        "xstring": "c",
+        "xutility": "c",
+        "xtr1common": "c"
+    }
+}
