@@ -5,12 +5,21 @@
 #include <HardwareSerial.h>
 #include "ADS1X15.h"
 #include "driver/ledc.h"
+#include <Preferences.h>
 
-#define VERSION "v20.3.5"
+#define VERSION "v27.3.2"
 
 // WiFi credentials
-const char* ssid = "Redmi K70 Pro";
-const char* password = "1428782871qzj";
+const char* ap_ssid = "ESP32S3_setup";
+const char* ap_password = "12345678";
+Preferences preferences;
+
+const char* configPage =
+"<form action='/save' method='POST'>"
+"SSID: <input type='text' name='ssid'><br>"
+"Password: <input type='password' name='password'><br>"
+"<input type='submit' value='Save'>"
+"</form>";
 
 // WebServer instance
 WebServer server(80);
@@ -79,7 +88,7 @@ typedef enum {
   WATER_LEAK_DETECTED,
   FLOAT_DETECTED,
   POOR_WATER_QUALITY,
-  H2_ABOVE_1_PERCENT
+  H2_LEAK_DETECTED
 } ErrorCode;
 
 // Interrupt flags
@@ -152,9 +161,9 @@ void send_error_to_Knob(ErrorCode error) {
       UART2.println("Poor Water Quality");
       Serial.println("Poor Water Quality-");
       break;
-    case H2_ABOVE_1_PERCENT:
+    case H2_LEAK_DETECTED:
       UART2.println("H2 leak detected");
-      Serial.println("H2 is above 1%-");
+      Serial.println("H2 leak detected");
       break;
   }
 }
@@ -171,22 +180,16 @@ void updatePWMVoltage(float voltage) {
   ledcWrite(pwmPin, voltage);
 }
 
-bool readH2Sensor(uint32_t h2_val) {
+bool readH2Sensor() {
   ADS.readADC(H2_SENSOR_ADS_CHANNEL);
   _ads_data.h2_data = ADS.getValue();
-  float f = ADS.toVoltage(1);
-  // uint32_t H2Value = (float)((_ads_data.h2_data * f) / _Volfor100PercentH2) * 100;
-  uint32_t H2Value = h2_val;
   Serial.print("H2 Value: ");
-  Serial.print(H2Value);
-  Serial.println("%");
-  if (H2Value > 1) {
-    Serial.print("H2: ");
-    Serial.println(H2Value);
+  Serial.println(_ads_data.h2_data);
+
+  if(_ads_data.h2_data > 21000)
     return false;
-  } else {
-    return true;
-  }
+ 
+  return true;
 }
 
 bool readTDS(uint32_t tds_val) {
@@ -377,31 +380,34 @@ void warning_Handle_Task(void *param) {
   for (;;) {
     if(OTA_IDLE == otaState)
     {
-      if (limitsw_interruptFlag) {
+      if (limitsw_interruptFlag || digitalRead(LIMIT_SW_PIN) == LOW) {
         if (!digitalRead(LIMIT_SW_PIN)) {
           updatePWMVoltage(0);
           send_error_to_Knob(HEPA_FILTER_MISSING);
+          limitsw_interruptFlag = true;
           delay(1000);
         } else {
           limitsw_interruptFlag = false;
         }
       }
 
-      if(waterleak_interruptFlag) {
+      if(waterleak_interruptFlag || digitalRead(WATER_LEAK_PIN) == HIGH) {
         delay(50);
         if (digitalRead(WATER_LEAK_PIN)) {
           updatePWMVoltage(0);
           send_error_to_Knob(WATER_LEAK_DETECTED);
+          waterleak_interruptFlag = true;
           delay(1000);
         } else {
           waterleak_interruptFlag = false;
         }
       }
 
-      if (levelfloat_interruptFlag) {
+      if (levelfloat_interruptFlag || digitalRead(LEVEL_FLOAT_PIN) == LOW) {
         if (!digitalRead(LEVEL_FLOAT_PIN)) {
             updatePWMVoltage(0);
             send_error_to_Knob(FLOAT_DETECTED);
+            levelfloat_interruptFlag = true;
             delay(1000);
         }
         else {
@@ -411,7 +417,7 @@ void warning_Handle_Task(void *param) {
 
       if (millis() - lastReadTimeSensor > SENSOR_READ_TIME) {
         lastReadTimeSensor = millis();
-        h2 = readH2Sensor(h2_percent.toInt());
+        h2 = readH2Sensor();
         tds = readTDS(tds_data.toInt());
 
         if (!tds) {
@@ -419,7 +425,7 @@ void warning_Handle_Task(void *param) {
           delay(1000);
         }
         if (!h2) {
-          send_error_to_Knob(H2_ABOVE_1_PERCENT);
+          send_error_to_Knob(H2_LEAK_DETECTED);
           delay(1000);
         }
 
@@ -468,17 +474,70 @@ void setup() {
   _Volfor1000ppmTDS = ADS.getMaxVoltage();    // Need to change if max voltage is not 1000ppm TDS
 
   // Connect to WiFi
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi...");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  // WiFi.begin(ssid, password);
+  // Serial.print("Connecting to WiFi...");
+  // while (WiFi.status() != WL_CONNECTED) {
+  //   delay(500);
+  //   Serial.print(".");
+  // }
+  // Serial.println("\nConnected to WiFi!");
+  // while (WiFi.localIP() == INADDR_NONE) {
+  //   Serial.println("Waiting for IP...");
+  //   delay(500);
+  // }
+
+  preferences.begin("wifi_config", false);
+  String stored_ssid = preferences.getString("ssid", "");
+  String stored_password = preferences.getString("password", "");
+
+  if (stored_ssid.length() > 0) {
+    WiFi.begin(stored_ssid.c_str(), stored_password.c_str());
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nConnected to WiFi!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+      server.on("/", handleRoot);
+
+      char ip_address[20];
+      snprintf(ip_address, sizeof(ip_address), "%d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+      Serial.print("Received ip_address: ");
+      Serial.println(ip_address);
+      UART2.print("IP:" + String(ip_address)+"\n");
+      delay(1000);
+    } else {
+      Serial.println("\nWiFi connection failed, switching to AP mode...");
+    }
   }
-  Serial.println("\nConnected to WiFi!");
-  while (WiFi.localIP() == INADDR_NONE) {
-    Serial.println("Waiting for IP...");
-    delay(500);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.softAP(ap_ssid, ap_password);
+    Serial.println("Access Point started. Connect to 'ESP32S3_Setup' and go to 192.168.4.1");
+    server.on("/", handleConfigWifi);
   }
+
+  server.on("/save", HTTP_POST, []() {
+    String new_ssid = server.arg("ssid");
+    String new_password = server.arg("password");
+    if (new_ssid.length() > 0 && new_password.length() > 0) {
+      preferences.putString("ssid", new_ssid);
+      preferences.putString("password", new_password);
+      Serial.print("SSID: ");
+      Serial.println(new_ssid);
+      Serial.print("PW: ");
+      Serial.println(new_password);
+
+      server.send(200, "text/html", "Saved! Restarting ESP32S3...");
+      delay(1000);
+      ESP.restart();
+    } else {
+      server.send(400, "text/html", "Invalid input. Try again.");
+    }
+  });
 
   delay(1000);
   UART2.print("\n");
@@ -493,7 +552,7 @@ void setup() {
   delay(1000);
 
   // Configure WebServer routes
-  server.on("/", handleRoot);
+  // server.on("/", handleRoot);
   // Lấy target từ query parameter
   server.on("/update", HTTP_POST, handleUpdate, handleUpload);
   server.begin();
@@ -533,6 +592,16 @@ void loop() {
       }
     }
   }
+}
+
+void handleConfigWifi() {
+  const char* configPage =
+  "<form action='/save' method='POST'>"
+  "SSID: <input type='text' name='ssid'><br>"
+  "Password: <input type='password' name='password'><br>"
+  "<input type='submit' value='Save'>"
+  "</form>";
+  server.send(200, "text/html", configPage);
 }
 
 // Handle root route: gửi HTML form
