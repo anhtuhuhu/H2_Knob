@@ -7,191 +7,218 @@
 #define _1_28_V8_240_240_UI_H
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 #include "lvgl.h"
 #include <Arduino.h>
-
+#include <math.h>
 
 #include "ui_helpers.h"
 #include "ui_events.h"
 
 // DEFINES
-#define ICON_RESUME LV_SYMBOL_PAUSE   //Icon Resume for STATE
-#define ICON_STOP   LV_SYMBOL_PLAY    //Icon Stop for STATE
+#define ICON_RESUME LV_SYMBOL_PAUSE // Icon Resume for STATE
+#define ICON_STOP LV_SYMBOL_PLAY    // Icon Stop for STATE
 
-#define COLOR_BLUE   lv_color_make(0,128,200)
-// #define COLOR_BLUE   lv_color_make(0,191,255)
-#define COLOR_WHITE  lv_color_white()
-#define COLOR_YELLOW lv_color_make(218,179,23)
+#define COLOR_BLUE lv_color_make(0, 128, 200)
+#define COLOR_WHITE lv_color_white()
+#define COLOR_YELLOW lv_color_make(218, 179, 23)
 
-#define FONT_SIZE_STATE_NORMAL                  &lv_font_montserrat_32  //font size for STATE as NORMAL
-#define FONT_SIZE_STATE_SELECTED                &lv_font_montserrat_46  //font size for STATE being SELECTED
-#define FONT_SIZE_TIME_NORMAL                   &lv_font_montserrat_30  //font size for TIME as NORMAL
-#define FONT_SIZE_TIME_SELECTED                 &lv_font_montserrat_42  //font size for TIME being SELECTED
-#define FONT_SIZE_PERCENT_NORMAL                &lv_font_montserrat_22  //font size for PERCENT as NORMAL
-#define FONT_SIZE_PERCENT_SELECTED              &lv_font_montserrat_46  //font size for PERCENT being SELECTED
-#define FONT_SIZE_SETTING_TIMER                 &lv_font_montserrat_32  //font size for SETTING_TIMER as NORMAL
-#define FONT_SIZE_SETTING_H2                    &lv_font_montserrat_32  //font size for SETTING_H2   as NORMAL
-#define FONT_SIZE_SETTING                       &lv_font_montserrat_32  //font size for SETTING as NORMAL
-#define FONT_SIZE_OPTION_NORMAL                 &lv_font_montserrat_18  //font size for OPTION as NORMAL
-#define FONT_SIZE_OPTION_SELECTED               &lv_font_montserrat_28  //font size for OPTION as SELECTED
-#define FONT_SIZE_INFO                          &lv_font_montserrat_12  //font size for INFO as NORMAL
-#define FONT_SIZE_WARNING                       &lv_font_montserrat_26  //font size for WARNING as NORMAL
-#define FONT_SIZE_ERROR                         &lv_font_montserrat_16  //font size for ERROR MESSAGE as NORMAL
-#define FONT_SIZE_CALIB                         &lv_font_montserrat_26  //font size for CALIB as NORMAL
-#define FONT_SIZE_AIR_FLOW_RATE                 &lv_font_montserrat_42  //font size for AIR FLOW RATE as NORMAL
-#define FONT_SIZE_EQUATION                      &lv_font_montserrat_24  //font size for EQUATION as NORMAL
-#define FONT_SIZE_EQUATION_OPTION               &lv_font_montserrat_22  //font size for EQUATION_OPTION as NORMAL
-#define FONT_SIZE_EQUATION_OPTION_SELECTED      &lv_font_montserrat_28  //font size for EQUATION_OPTION as SELECTED
+#define FONT_SIZE_STATE_NORMAL &lv_font_montserrat_32             // font size for STATE as NORMAL
+#define FONT_SIZE_STATE_SELECTED &lv_font_montserrat_46           // font size for STATE being SELECTED
+#define FONT_SIZE_TIME_NORMAL &lv_font_montserrat_30              // font size for TIME as NORMAL
+#define FONT_SIZE_TIME_SELECTED &lv_font_montserrat_42            // font size for TIME being SELECTED
+#define FONT_SIZE_PERCENT_NORMAL &lv_font_montserrat_22           // font size for PERCENT as NORMAL
+#define FONT_SIZE_PERCENT_SELECTED &lv_font_montserrat_46         // font size for PERCENT being SELECTED
+#define FONT_SIZE_SETTING_TIMER &lv_font_montserrat_32            // font size for SETTING_TIMER as NORMAL
+#define FONT_SIZE_SETTING_H2 &lv_font_montserrat_32               // font size for SETTING_H2   as NORMAL
+#define FONT_SIZE_SETTING &lv_font_montserrat_32                  // font size for SETTING as NORMAL
+#define FONT_SIZE_OPTION_NORMAL &lv_font_montserrat_18            // font size for OPTION as NORMAL
+#define FONT_SIZE_OPTION_SELECTED &lv_font_montserrat_28          // font size for OPTION as SELECTED
+#define FONT_SIZE_INFO &lv_font_montserrat_12                     // font size for INFO as NORMAL
+#define FONT_SIZE_WARNING &lv_font_montserrat_26                  // font size for WARNING as NORMAL
+#define FONT_SIZE_ERROR &lv_font_montserrat_16                    // font size for ERROR MESSAGE as NORMAL
+#define FONT_SIZE_CALIB &lv_font_montserrat_26                    // font size for CALIB as NORMAL
+#define FONT_SIZE_AIR_FLOW_RATE &lv_font_montserrat_42            // font size for AIR FLOW RATE as NORMAL
+#define FONT_SIZE_EQUATION &lv_font_montserrat_24                 // font size for EQUATION as NORMAL
+#define FONT_SIZE_EQUATION_OPTION &lv_font_montserrat_22          // font size for EQUATION_OPTION as NORMAL
+#define FONT_SIZE_EQUATION_OPTION_SELECTED &lv_font_montserrat_28 // font size for EQUATION_OPTION as SELECTED
 
-#define SETTING_MAX_OPTION 2
+#define PERCENT_H2_MAX 4.0
+#define SETTING_MAX_OPTION 3
 
-#define AIR_FLOWRATE_MIN    8
-#define AIR_FLOWRATE_MAX    11
+#define AIR_FLOWRATE_MIN 8
+#define AIR_FLOWRATE_MAX 11
 
-// SCREEN: ui_setting_h2
-void ui_setting_h2_screen_init(void);
-extern lv_obj_t * ui_setting_h2;
-extern lv_obj_t * label_set_h2;
+    // SCREEN: ui_setting_h2
+    void ui_setting_h2_screen_init(void);
+    extern lv_obj_t *ui_setting_h2;
+    extern lv_obj_t *label_set_h2;
 
-// SCREEN: ui_setting_timer
-void ui_setting_timer_screen_init(void);
-extern lv_obj_t * ui_setting_timer;
-extern lv_obj_t * label_set_timer;
-extern lv_obj_t * label_hour;
-extern lv_obj_t * label_minute;
-extern lv_obj_t * label_colons;
-extern lv_obj_t * label_notice;
+    // SCREEN: ui_setting_timer
+    void ui_setting_timer_screen_init(void);
+    extern lv_obj_t *ui_setting_timer;
+    extern lv_obj_t *label_set_timer;
+    extern lv_obj_t *label_hour;
+    extern lv_obj_t *label_minute;
+    extern lv_obj_t *label_colons;
+    extern lv_obj_t *label_notice;
 
-// SCREEN: ui_display_error
-extern void ui_display_error_screen_init(void);
-extern lv_obj_t * ui_display_error;
-extern lv_obj_t * label_warning;
-extern lv_obj_t * arc;
-extern lv_obj_t * label_error_message;
-extern lv_obj_t * label_info;
-extern lv_obj_t * qr_code;
+    // SCREEN: ui_display_error
+    extern void ui_display_error_screen_init(void);
+    extern lv_obj_t *ui_display_error;
+    extern lv_obj_t *label_warning;
+    extern lv_obj_t *arc;
+    extern lv_obj_t *label_error_message;
+    extern lv_obj_t *label_info;
+    extern lv_obj_t *qr_code;
 
-// SCREEN: ui_process_setting
-extern void ui_process_setting_screen_init(void);
-extern lv_obj_t * ui_process_setting;
-extern lv_obj_t * label_calib;
-extern lv_obj_t * label_air_flowrate;
-extern lv_obj_t * label_version;
-extern lv_obj_t * label_version_board;
-extern lv_obj_t * label_version_knob;
+    // SCREEN: ui_process_setting
+    extern void ui_process_setting_screen_init(void);
+    extern lv_obj_t *ui_process_setting;
+    extern lv_obj_t *label_calib;
+    extern lv_obj_t *label_air_flowrate;
+    extern lv_obj_t *label_version;
+    extern lv_obj_t *label_version_board;
+    extern lv_obj_t *label_version_knob;
+    extern lv_obj_t *label_id;
+    extern lv_obj_t *label_IP;
+    // SCREEN: ui_setting
+    extern void ui_setting_screen_init(void);
+    extern lv_obj_t *ui_setting;
+    extern lv_obj_t *label_setting;
+    extern lv_obj_t *label_option_calib;
+    extern lv_obj_t *label_option_version;
+    extern lv_obj_t *label_option_ip;
 
-// SCREEN: ui_setting
-extern void ui_setting_screen_init(void);
-extern lv_obj_t * ui_setting;
-extern lv_obj_t * label_setting;
-extern lv_obj_t * label_option_calib;
-extern lv_obj_t * label_option_version;
+    // CUSTOM VARIABLES
+    extern uint8_t savedDataToSend;
+    extern float percentH2FromKnob;
+    extern float h2FlowRate;
+    extern float airFlowRate;
+    extern char timerFromKnob[10];
+    extern char percentH2_str[4];
+    extern char airFlowRate_str[10];
+    extern void start_countdown();
+    extern void stop_countdown();
+    extern void pause_countdown();
+    extern void resume_countdown();
+    extern uint8_t error_flag;
+    extern uint8_t have_set_timer;
+    extern void save_data_to_nvs(char *timer, float *_h2_percent);
+    extern void get_data_from_nvs(char *timer, float *_h2_percent);
+    extern void save_version_to_nvs(char *versionBoard, char *versionKnob);
+    extern void get_version_from_nvs(char *versionBoard, char *versionKnob);
+    extern void save_calib_data_to_nvs(char *airFlowRate_str);
+    extern void get_calib_data_to_nvs(char *airFlowRate_str);
+    extern char versionBoard[10];
+    extern char versionKnob[10];
+    extern char ip_address[20];
+    // EVENTS
+    // typedef enum
+    // {
+    //     ERROR = -1,
+    //     STOP,
+    //     RUNNING,
+    //     SELECTION_STATE,
+    //     SELECTION_TIME,
+    //     TIME_SELECTED,
+    //     SELECTION_H2,
+    //     H2_SELECTED,
+    //     CALIB_AIR_FLOWRATE,
+    //     SHOW_VERSION,
+    //     SHOW_IP,
+    //     SHOW_QR,
+    //     SETTING
+    // } knob_state_t;
 
-// CUSTOM VARIABLES
-extern uint8_t savedDataToSend;
-extern float percentH2FromKnob;
-extern float h2FlowRate;
-extern float airFlowRate;
-extern char timerFromKnob[10];
-extern char percentH2_str[4];
-extern char airFlowRate_str[10];
-extern void start_countdown();
-extern void stop_countdown();
-extern void pause_countdown();
-extern void resume_countdown();
-extern uint8_t error_flag;
-extern uint8_t have_set_timer;
-extern void save_data_to_nvs(char *timer, float *_h2_percent);
-extern void get_data_from_nvs(char *timer, float *_h2_percent);
-extern char versionBoard[20];
-extern char versionKnob[20];
-// EVENTS
-typedef enum
-{
-    ERROR = -1,
-    STOP,
-    RUNNING,
-    SELECTION_STATE,
-    SELECTION_TIME,
-    TIME_SELECTED,
-    SELECTION_H2,
-    H2_SELECTED,
-    CALIB_AIR_FLOWRATE,
-    SHOW_VERSION,
-    SHOW_QR,
-    SETTING
-} knob_state_t;
+    typedef enum
+    {
+        ERROR = -1,
+        STOP,
+        RUNNING,
+        SELECTION_STATE,
+        SELECTION_TIME,
+        TIME_SELECTED,
+        SELECTION_H2,
+        H2_SELECTED,
+        CALIB_AIR_FLOWRATE,
+        SHOW_VERSION,
+        SHOW_IP,
+        SHOW_QR,
+        SETTING
+    } knob_state_t;
 
-typedef enum
-{
-    STATE_IDLE,
-    PAUSE,
-    RESUME
-} knob_selection_state_t;
+    typedef enum
+    {
+        PAUSE,
+        RESUME
+    } knob_selection_state_t;
 
-typedef enum
-{
-    TIME_IDLE,
-    HOUR,
-    MINUTE,
-    TIME_LIMIT
-} knob_selection_time_t;
+    typedef enum
+    {
+        TIME_IDLE,
+        HOUR,
+        MINUTE,
+        TIME_LIMIT
+    } knob_selection_time_t;
 
-typedef enum
-{
-    OPTION_IDLE,
-    OPTION_1,
-    OPTION_2
-} knob_setting_t;
+    typedef enum
+    {
+        OPTION_IDLE,
+        OPTION_1,
+        OPTION_2,
+        OPTION_3,
+    } knob_setting_t;
 
-typedef enum {
-    COUNTDOWN_START,
-    COUNTDOWN_STOP,
-    COUNTDOWN_PAUSE,
-    COUNTDOWN_RESUME
-} countdown_state_t;
+    typedef enum
+    {
+        COUNTDOWN_START,
+        COUNTDOWN_STOP,
+        COUNTDOWN_PAUSE,
+        COUNTDOWN_RESUME
+    } countdown_state_t;
 
-//SCREEN: ui_main
-void ui_main_screen_init(void);
-void arc_event_cb(lv_event_t *e);
-extern lv_obj_t *ui_main;
-extern lv_obj_t *arc;
-extern lv_obj_t *label_time;
-extern lv_obj_t *label_percent;
-extern lv_obj_t *state_icon;
-extern lv_obj_t *bg_img;
+    // SCREEN: ui_main
+    void ui_main_screen_init(void);
+    void arc_event_cb(lv_event_t *e);
+    extern lv_obj_t *ui_main;
+    extern lv_obj_t *arc;
+    extern lv_obj_t *label_time;
+    extern lv_obj_t *label_percent;
+    extern lv_obj_t *state_icon;
+    extern lv_obj_t *bg_img;
 
-// test arc
-extern lv_style_t style_arc1;
-extern lv_style_t style_arc2;
-extern lv_obj_t *arc1;
-extern lv_obj_t *arc2;
-extern lv_anim_t anim_1;
-extern lv_anim_t anim_2;
-extern void rotate_arc(lv_obj_t *arc, int32_t angle);
-//
+    // test arc
+    extern lv_style_t style_arc1;
+    extern lv_style_t style_arc2;
+    extern lv_obj_t *arc1;
+    extern lv_obj_t *arc2;
+    extern lv_anim_t anim_1;
+    extern lv_anim_t anim_2;
+    extern void rotate_arc(lv_obj_t *arc, int32_t angle);
+    //
 
-extern lv_obj_t * ui____initial_actions0;
+    extern lv_obj_t *ui____initial_actions0;
 
-// IMAGES AND IMAGE SETS
-LV_IMG_DECLARE(Idle);
-LV_IMG_DECLARE(QR_code);
-// UI INIT
-void ui_init(void);
-void LVGL_knob_event(void *event);
-void LVGL_button_event(void *event);
-void exchange_H2Percent(void);
-void exchange_AirFlowRate(void);
-// void set_font(lv_obj_t *obj, const lv_font_t *font);
-// void set_color(lv_obj_t *obj, lv_color_t color);
-void reset_ui(void);
-void switch_ui(lv_obj_t *screen, lv_obj_t *label);
-// void update_setting_timer_labels(void);
-void start_animation(lv_anim_t anim, lv_obj_t *arc);
-void delete_animation(lv_obj_t *arc);
+    // IMAGES AND IMAGE SETS
+    LV_IMG_DECLARE(Idle);
+    LV_IMG_DECLARE(QR_code);
+    // UI INIT
+    void ui_init(void);
+    void LVGL_knob_event(void *event);
+    void LVGL_button_event(void *event);
+    void exchange_H2Percent(void);
+    void exchange_AirFlowRate(void);
+    void set_font(lv_obj_t *obj, const lv_font_t *font);
+    void set_color(lv_obj_t *obj, lv_color_t color);
+    void reset_ui(void);
+    void switch_ui(lv_obj_t *screen, lv_obj_t *label);
+    void update_setting_timer_labels(void);
+    void start_animation(lv_anim_t anim, lv_obj_t *arc);
+    void delete_animation(lv_obj_t *arc);
 
 #ifdef __cplusplus
 } /*extern "C"*/

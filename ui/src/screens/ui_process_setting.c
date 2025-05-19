@@ -22,7 +22,7 @@ void ui_process_setting_screen_init(void)
 
     // create label_air_flowrate
     label_air_flowrate = lv_label_create(ui_process_setting);
-    lv_obj_set_width(label_air_flowrate, LV_SIZE_CONTENT);   
+    lv_obj_set_width(label_air_flowrate, LV_SIZE_CONTENT);
     lv_obj_set_height(label_air_flowrate, LV_SIZE_CONTENT);
     lv_obj_align(label_air_flowrate, LV_ALIGN_CENTER, 0, 0);
     lv_label_set_text(label_air_flowrate, airFlowRate_str);
@@ -31,20 +31,17 @@ void ui_process_setting_screen_init(void)
 
     // create label_equation
     label_version = lv_label_create(ui_process_setting);
-    lv_obj_set_width(label_version, LV_SIZE_CONTENT);   
-    lv_obj_set_height(label_version, LV_SIZE_CONTENT);    
+    lv_obj_set_width(label_version, LV_SIZE_CONTENT);
+    lv_obj_set_height(label_version, LV_SIZE_CONTENT);
     lv_obj_align(label_version, LV_ALIGN_CENTER, 0, -55);
     lv_label_set_text(label_version, "VERSION");
     lv_obj_set_style_text_font(label_version, FONT_SIZE_EQUATION, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_flag(label_version, LV_OBJ_FLAG_HIDDEN);
 
-    // versionBoard = (char*)malloc(10);  // Cấp phát bộ nhớ cho 50 ký tự
-    // strcpy(versionBoard, "v1.0");  // Gán giá trị
-    
     // create label_equation_1
     label_version_board = lv_label_create(ui_process_setting);
-    lv_obj_set_width(label_version_board, LV_SIZE_CONTENT);   
-    lv_obj_set_height(label_version_board, LV_SIZE_CONTENT);    
+    lv_obj_set_width(label_version_board, LV_SIZE_CONTENT);
+    lv_obj_set_height(label_version_board, LV_SIZE_CONTENT);
     lv_obj_align(label_version_board, LV_ALIGN_CENTER, 0, 0);
     // lv_label_set_text(label_version_board, versionBoard);
     lv_obj_set_style_text_font(label_version_board, FONT_SIZE_EQUATION_OPTION, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -52,10 +49,27 @@ void ui_process_setting_screen_init(void)
 
     // create label_equation_2
     label_version_knob = lv_label_create(ui_process_setting);
-    lv_obj_set_width(label_version_knob, LV_SIZE_CONTENT);   
-    lv_obj_set_height(label_version_knob, LV_SIZE_CONTENT);    
+    lv_obj_set_width(label_version_knob, LV_SIZE_CONTENT);
+    lv_obj_set_height(label_version_knob, LV_SIZE_CONTENT);
     lv_obj_align(label_version_knob, LV_ALIGN_CENTER, 0, 55);
-    lv_label_set_text(label_version_knob, "KNOB: v18.3.1");
+    // lv_label_set_text(label_version_knob, "KNOB: v19.3.1");
     lv_obj_set_style_text_font(label_version_knob, FONT_SIZE_EQUATION_OPTION, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_flag(label_version_knob, LV_OBJ_FLAG_HIDDEN);
+
+    // create label_equation
+    label_id = lv_label_create(ui_process_setting);
+    lv_obj_set_width(label_id, LV_SIZE_CONTENT);
+    lv_obj_set_height(label_id, LV_SIZE_CONTENT);
+    lv_obj_align(label_id, LV_ALIGN_CENTER, 0, -55);
+    lv_label_set_text(label_id, "IP");
+    lv_obj_set_style_text_font(label_id, FONT_SIZE_EQUATION, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_flag(label_id, LV_OBJ_FLAG_HIDDEN);
+
+    label_IP = lv_label_create(ui_process_setting);
+    lv_obj_set_width(label_IP, LV_SIZE_CONTENT);
+    lv_obj_set_height(label_IP, LV_SIZE_CONTENT);
+    lv_obj_align(label_IP, LV_ALIGN_CENTER, 0, 0);
+    // lv_label_set_text(label_IP, "192.168.4.1");
+    lv_obj_set_style_text_font(label_IP, FONT_SIZE_EQUATION, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_flag(label_IP, LV_OBJ_FLAG_HIDDEN);
 }

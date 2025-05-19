@@ -4,74 +4,20 @@
 #include "lvgl_port_v8.h"
 #include "driver/timer.h"
 #include "nvs_flash.h"
-#include "nvs.h"
-
-//==================================================================================================
-#include <WiFi.h>
-#include <WebServer.h>
-#include <Preferences.h>
 #include <Update.h>
 
-const char* version = "v18.3.2";
-Preferences preferences;
-WebServer server(80);
-
-const char* ap_ssid = "ESP32_Setup";
-const char* ap_password = "12345678";
-
-const char* configPage =
-"<form action='/save' method='POST'>"
-"SSID: <input type='text' name='ssid'><br>"
-"Password: <input type='password' name='password'><br>"
-"<input type='submit' value='Save'>"
-"</form>";
-
-const char* otaPage = 
-"<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
-"<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
-"<input type='file' name='update'>"
-"<input type='submit' value='Update'>"
-"</form>"
-"<div id='prg'>progress: 0%</div>"
-"<script>"
-"$('form').submit(function(e){"
-"e.preventDefault();"
-"var form = $('#upload_form')[0];"
-"var data = new FormData(form);"
-" $.ajax({"
-"url: '/update',"
-"type: 'POST',"
-"data: data,"
-"contentType: false,"
-"processData:false,"
-"xhr: function() {"
-"var xhr = new window.XMLHttpRequest();"
-"xhr.upload.addEventListener('progress', function(evt) {"
-"if (evt.lengthComputable) {"
-"var per = evt.loaded / evt.total;"
-"$('#prg').html('progress: ' + Math.round(per*100) + '%');"
-"}"
-"}, false);"
-"return xhr;"
-"},"
-"success:function(d, s) {"
-"console.log('success!')" 
-"},"
-"error: function (a, b, c) {}"
-"});"
-"});"
-"</script>";
+#define VERSION "v17.5.1"
 
 //==================================================================================================
 #ifdef KNOB21
-#define GPIO_NUM_KNOB_PIN_A     6
-#define GPIO_NUM_KNOB_PIN_B     5
-#define GPIO_BUTTON_PIN         GPIO_NUM_0
+#define GPIO_NUM_KNOB_PIN_A 6
+#define GPIO_NUM_KNOB_PIN_B 5
+#define GPIO_BUTTON_PIN GPIO_NUM_0
 #endif
 #ifdef KNOB13
-#define GPIO_NUM_KNOB_PIN_A     7
-#define GPIO_NUM_KNOB_PIN_B     6
-#define GPIO_BUTTON_PIN         GPIO_NUM_9
+#define GPIO_NUM_KNOB_PIN_A 7
+#define GPIO_NUM_KNOB_PIN_B 6
+#define GPIO_BUTTON_PIN GPIO_NUM_9
 #endif
 
 #ifdef KNOB
@@ -83,12 +29,13 @@ ESP_Knob *knob;
 #include <ui.h>
 #include <HardwareSerial.h>
 #define TIMER_MAX_LENGTH 10
+#define VERSION_MAX_LENGTH 10
+#define AIR_FLOWRATE_MAX_LENGTH 10
 
-HardwareSerial MySerial(1);
-
+//=====================================================================
 uint8_t savedDataToSend = false;
 float percentH2FromKnob;
-float airFlowRate = 10;   // 10L/min
+float airFlowRate = 10;  // 10L/min
 char timerFromKnob[10] = "00:00:00";
 bool isErrorScreenActive = false;
 TaskHandle_t countdown_task_handle = NULL;
@@ -96,40 +43,37 @@ bool stop_countdown_flag = false;
 uint8_t error_flag = false;
 extern knob_state_t knob_state;
 extern countdown_state_t countdown_state;
+SemaphoreHandle_t xKnobIDLESemaphore;
 //=====================================================================
 
-//=====================================================================
-
-void onKnobLeftEventCallback(int count, void *usr_data)
-{
-    Serial.printf("Detect left event, count is %d\n", count);
-    lvgl_port_lock(-1);
-    LVGL_knob_event((void*)KNOB_LEFT);
-    lvgl_port_unlock();
+void onKnobLeftEventCallback(int count, void *usr_data) {
+  Serial.printf("Detect left event, count is %d\n", count);
+  lvgl_port_lock(-1);
+  LVGL_knob_event((void *)KNOB_LEFT);
+  lvgl_port_unlock();
 }
 
-void onKnobRightEventCallback(int count, void *usr_data)
-{
-    Serial.printf("Detect right event, count is %d\n", count);
-    lvgl_port_lock(-1);
-    LVGL_knob_event((void*)KNOB_RIGHT);
-    lvgl_port_unlock();
+void onKnobRightEventCallback(int count, void *usr_data) {
+  Serial.printf("Detect right event, count is %d\n", count);
+  lvgl_port_lock(-1);
+  LVGL_knob_event((void *)KNOB_RIGHT);
+  lvgl_port_unlock();
 }
 
 static void SingleClickCb(void *button_handle, void *usr_data) {
-    Serial.println("Button Single Click");
-    lvgl_port_lock(-1);
-    LVGL_button_event((void*)BUTTON_SINGLE_CLICK);
-    lvgl_port_unlock();
+  Serial.println("Button Single Click");
+  lvgl_port_lock(-1);
+  LVGL_button_event((void *)BUTTON_SINGLE_CLICK);
+  lvgl_port_unlock();
 }
 
 static void LongPressHoldCb(void *button_handle, void *usr_data) {
   lvgl_port_lock(-1);
-  LVGL_button_event((void*)BUTTON_LONG_PRESS_HOLD);
+  LVGL_button_event((void *)BUTTON_LONG_PRESS_HOLD);
   lvgl_port_unlock();
 }
 
-// String receivedString; // Variable that receive data via Serial
+String receivedString;  // Variable that receive data via Serial
 
 //==================================================Begin - NVS===================================================
 void save_data_to_nvs(char *timer, float *_h2_percent) {
@@ -162,7 +106,6 @@ void save_data_to_nvs(char *timer, float *_h2_percent) {
   nvs_commit(nvs_handle);
 
   nvs_close(nvs_handle);
-
 }
 
 void get_data_from_nvs(char *timer, float *_h2_percent) {
@@ -184,10 +127,10 @@ void get_data_from_nvs(char *timer, float *_h2_percent) {
     Serial.printf("Read timer: %s\n", timer);
   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
     Serial.println("Timer not found in NVS.");
-    timer[0] = '\0'; // Set to empty if UUID not found
+    timer[0] = '\0';
   } else {
     Serial.printf("Error reading timer: %s\n", esp_err_to_name(err));
-    timer[0] = '\0'; // Set to empty if error occured
+    timer[0] = '\0';
   }
 
   int32_t h2_int_value = 0;
@@ -206,59 +149,179 @@ void get_data_from_nvs(char *timer, float *_h2_percent) {
 
   nvs_close(nvs_handle);
 }
+
+void save_version_to_nvs(char* versionBoard, char* versionKnob) {
+  nvs_handle_t nvs_handle;
+  esp_err_t err;
+
+  err = nvs_open("version", NVS_READWRITE, &nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+    return;
+  }
+
+  const char *versionBoard_key = "versionBoard";
+  const char *versionKnob_key = "versionKnob";
+
+  err = nvs_set_str(nvs_handle, versionBoard_key, versionBoard);
+  if (err == ESP_OK) {
+    Serial.printf("Save version Board: %s to NVS\n", versionBoard);
+  } else {
+    Serial.printf("Error saving version Board: %s\n", esp_err_to_name(err));
+  }
+
+  err = nvs_set_str(nvs_handle, versionKnob_key, versionKnob);
+  if (err == ESP_OK) {
+    Serial.printf("Save version Knob: %s to NVS\n", versionKnob);
+  } else {
+    Serial.printf("Error saving version Knob: %s\n", esp_err_to_name(err));
+  }
+
+  nvs_commit(nvs_handle);
+
+  nvs_close(nvs_handle);
+}
+
+void get_version_from_nvs(char* versionBoard, char* versionKnob) {
+  nvs_handle_t nvs_handle;
+  esp_err_t err;
+
+  err = nvs_open("version", NVS_READONLY, &nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+    return;
+  }
+
+  const char *versionBoard_key = "versionBoard";
+  const char *versionKnob_key = "versionKnob";
+  size_t version_len = VERSION_MAX_LENGTH;
+
+  err = nvs_get_str(nvs_handle, versionBoard_key, versionBoard, &version_len);
+  if (err == ESP_OK) {
+    Serial.printf("Read version Board: %s\n", versionBoard);
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    Serial.println("Version Board not found in NVS.");
+    versionBoard[0] = '\0';
+  } else {
+    Serial.printf("Error reading version Board: %s\n", esp_err_to_name(err));
+    versionBoard[0] = '\0';
+  }
+
+  err = nvs_get_str(nvs_handle, versionKnob_key, versionKnob, &version_len);
+  if (err == ESP_OK) {
+    Serial.printf("Read version Knob: %s\n", versionKnob);
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    Serial.println("Version Knob not found in NVS.");
+    versionKnob[0] = '\0';
+  } else {
+    Serial.printf("Error reading version Knob: %s\n", esp_err_to_name(err));
+    versionKnob[0] = '\0';
+  }
+
+  nvs_close(nvs_handle);
+}
+
+void save_calib_data_to_nvs(char *airFlowRate_str) {
+  nvs_handle_t nvs_handle;
+  esp_err_t err;
+
+  err = nvs_open("calib", NVS_READWRITE, &nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+    return;
+  }
+
+  const char *airFlowRate_key = "airFlowRate";
+
+  err = nvs_set_str(nvs_handle, airFlowRate_key, airFlowRate_str);
+  if (err == ESP_OK) {
+    Serial.printf("Save airFlowRate: %s to NVS\n", airFlowRate_str);
+  } else {
+    Serial.printf("Error saving airFlowRate: %s\n", esp_err_to_name(err));
+  }
+
+  nvs_commit(nvs_handle);
+
+  nvs_close(nvs_handle);
+}
+
+void get_calib_data_to_nvs(char *airFlowRate_str) {
+  nvs_handle_t nvs_handle;
+  esp_err_t err;
+
+  err = nvs_open("calib", NVS_READONLY, &nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+    return;
+  }
+
+  const char *airFlowRate_key = "airFlowRate";
+  size_t airFlowRate_len = AIR_FLOWRATE_MAX_LENGTH;
+
+  err = nvs_get_str(nvs_handle, airFlowRate_key, airFlowRate_str, &airFlowRate_len);
+  if (err == ESP_OK) {
+    Serial.printf("Read air flowrate: %s\n", airFlowRate_str);
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    Serial.println("Air flowrate not found in NVS.");
+    airFlowRate_str[0] = '\0';
+  } else {
+    Serial.printf("Error reading version Board: %s\n", esp_err_to_name(err));
+    airFlowRate_str[0] = '\0';
+  }
+
+  nvs_close(nvs_handle);
+}
 //==================================================End - NVS===================================================
 
 // Task đếm ngược thời gian
 void countdown_task(void *pvParameters) {
-    int hour = (timerFromKnob[0] - '0') * 10 + (timerFromKnob[1] - '0');
-    int minute = (timerFromKnob[3] - '0') * 10 + (timerFromKnob[4] - '0');
-    int second = (timerFromKnob[6] - '0') * 10 + (timerFromKnob[7] - '0');
-    if (second != 0) second = 0;
-    int total_seconds = hour * 3600 + minute * 60 + second;
+  int hour = (timerFromKnob[0] - '0') * 10 + (timerFromKnob[1] - '0');
+  int minute = (timerFromKnob[3] - '0') * 10 + (timerFromKnob[4] - '0');
+  int second = (timerFromKnob[6] - '0') * 10 + (timerFromKnob[7] - '0');
+  if (second != 0) second = 0;
+  int total_seconds = hour * 3600 + minute * 60 + second;
 
-    while (total_seconds > 0) {
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Delay 1 giây
-        if (stop_countdown_flag) break;
-        total_seconds--;
+  while (total_seconds > 0) {
+    vTaskDelay(pdMS_TO_TICKS(950));  // Delay 1 giây
+    if (stop_countdown_flag) break;
+    total_seconds--;
 
-        hour = total_seconds / 3600;
-        minute = (total_seconds % 3600) / 60;
-        second = total_seconds % 60;
+    hour = total_seconds / 3600;
+    minute = (total_seconds % 3600) / 60;
+    second = total_seconds % 60;
 
-        // Cập nhật giao diện
-        lvgl_port_lock(-1);
-        update_display(hour, minute, second);
-        lvgl_port_unlock();
-    }
-
+    // Cập nhật giao diện
     lvgl_port_lock(-1);
-    delete_animation(arc1);
-    delete_animation(arc2);
+    update_display(hour, minute, second);
     lvgl_port_unlock();
-    // Xóa task
-    stop_countdown();
-    
+  }
+
+  lvgl_port_lock(-1);
+  delete_animation(arc1);
+  delete_animation(arc2);
+  lvgl_port_unlock();
+  // Xóa task
+  stop_countdown();
 }
 
 void update_display(int hour, int minute, int second) {
-    // Cập nhật lại chuỗi timerFromKnob
-    sprintf(timerFromKnob, "%02d:%02d:%02d", hour, minute, second);
+  // Cập nhật lại chuỗi timerFromKnob
+  sprintf(timerFromKnob, "%02d:%02d:%02d", hour, minute, second);
 
-    // Cập nhật nhãn hiển thị thời gian
-    lv_label_set_text(label_time, timerFromKnob);
+  // Cập nhật nhãn hiển thị thời gian
+  lv_label_set_text(label_time, timerFromKnob);
 
-    // Cập nhật Arc chỉ theo giờ
-    // lv_arc_set_value(arc, hour);
+  // Cập nhật Arc chỉ theo giờ
+  // lv_arc_set_value(arc, hour);
 }
 
 void start_countdown() {
   stop_countdown_flag = false;
 
   // if (countdown_task_handle == NULL) {
-    xTaskCreate(countdown_task, "CountdownTask", 4096, NULL, 8, &countdown_task_handle);
-    countdown_state = COUNTDOWN_START;
+  xTaskCreate(countdown_task, "CountdownTask", 4096, NULL, 8, &countdown_task_handle);
+  countdown_state = COUNTDOWN_START;
   // }
-    
 }
 
 void pause_countdown() {
@@ -278,42 +341,330 @@ void stop_countdown() {
   lvgl_port_unlock();
   reset_ui();
   save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
-  
-  stop_countdown_flag = true; // Bật flag dừng
+
+  stop_countdown_flag = true;  // Bật flag dừng
   if (countdown_task_handle != NULL) {
     countdown_state = COUNTDOWN_STOP;
     vTaskDelete(countdown_task_handle);
     countdown_task_handle = NULL;
   }
-  
 }
 
-const int MAX_LENGTH = 30;  // Kích thước tối đa của mảng char
-char receivedDataArray[MAX_LENGTH];  // Mảng lưu dữ liệu
+//=====================================================================
 
-void handleReceivedData(const String& data) {
+// Cấu hình UART (điều chỉnh chân RX, TX theo board của bạn)
+HardwareSerial OtaSerial(1); // RX: 20, TX: 21
+#define DEBUG_SERIAL Serial   // Sử dụng Serial cho debug
+
+// Cấu hình kích thước buffer và timeout OTA
+#define OTA_TIMEOUT 10000  // 5 giây
+
+// Các trạng thái OTA của Knob
+enum KnobState {
+  KNOB_IDLE,         // Không trong chế độ OTA
+  KNOB_OTA_READY,    // Đã sẵn sàng nhận header cho chunk tiếp theo
+  KNOB_OTA_RECEIVING // Đang nhận dữ liệu chunk
+};
+
+KnobState knobState = KNOB_IDLE;
+unsigned long lastPacketTime = 0;
+
+// Biến dùng để xử lý lệnh nhận qua UART
+String commandBuffer = "";
+
+// Biến dùng để xử lý chunk dữ liệu
+uint32_t expectedSize = 0;
+uint32_t currentCRC = 0;
+uint8_t* fileBuffer = NULL;
+size_t filePos = 0;
+
+// Hàm tính CRC32 (chuẩn IEEE 802.3)
+uint32_t crc32(const uint8_t* data, size_t length) {
+  uint32_t crc = 0xFFFFFFFF;
+  for (size_t i = 0; i < length; i++) {
+    crc ^= data[i];
+    for (int j = 0; j < 8; j++) {
+      if (crc & 1)
+        crc = (crc >> 1) ^ 0xEDB88320;
+      else
+        crc = crc >> 1;
+    }
+  }
+  return crc ^ 0xFFFFFFFF;
+}
+
+// Hàm xử lý một chunk dữ liệu nhận được
+void processChunk(uint8_t* data, size_t len, uint32_t crc) {
+  uint32_t calculatedCRC = crc32(data, len);
+  if (calculatedCRC != crc) {
+    OtaSerial.println("CRC_ERR");
+    return;
+  }
+  if (Update.write(data, len) != len) {
+    OtaSerial.println("ERR:WRITE_FAIL");
+    abortOTA();
+    return;
+  }
+  OtaSerial.flush();
+  OtaSerial.println("OK");
+  DEBUG_SERIAL.println("Send OK to controller");
+}
+
+// Hàm xử lý lệnh nhận qua UART (dòng văn bản kết thúc bằng '\n')
+void processCommand() {
+  commandBuffer.trim();
+  if (commandBuffer == "OTA_START") {
+    DEBUG_SERIAL.println("OTA_START");
+    if (Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      knobState = KNOB_OTA_READY;
+      while (OtaSerial.available()) {
+        OtaSerial.read();
+      }    
+      OtaSerial.println("READY");
+      OtaSerial.println("READY");
+      DEBUG_SERIAL.println("Send READY to Knob");
+    } else {
+      OtaSerial.println("ERR:INIT_FAIL");
+    }
+  }
+  else if (commandBuffer == "OTA_END") {
+    if (Update.end(true)) {
+      OtaSerial.println("OTA_SUCCESS");
+      delay(2000);
+      ESP.restart();
+    } else {
+      OtaSerial.println("ERR:END_FAIL");
+    }
+    knobState = KNOB_IDLE;
+  }
+  else if (commandBuffer == "OTA_ABORT") {
+    Update.abort();
+    knobState = KNOB_IDLE;
+    OtaSerial.println("ABORTED");
+  }
+  else
+  {
+    Serial.println("[Knob] " + commandBuffer);  // Xử lý dữ liệu bình thường
+    handleReceivedData(commandBuffer);
+  }
+  // Xóa buffer lệnh sau khi xử lý
+  commandBuffer = "";
+}
+
+// Hàm hủy OTA
+void abortOTA() {
+  Update.abort();
+  knobState = KNOB_IDLE;
+  OtaSerial.println("OTA_ABORTED");
+}
+
+#define MAGIC_MARKER 0xAABBCCDD
+#define HEADER_TOTAL_SIZE 12  // 4 byte marker + 4 byte len + 4 byte CRC
+
+static uint8_t headerBuffer[8];  // chỉ cần lưu phần len và CRC (8 byte)
+static size_t headerBufferPos = 0;
+
+
+void handleUART() {
+  while (OtaSerial.available()) {
+    if (knobState == KNOB_IDLE) {
+      char c = OtaSerial.read();
+      //DEBUG_SERIAL.println(c);
+      if (c == '\n') {
+        processCommand();
+      } else {
+        commandBuffer += c;
+      }
+    }
+    // Trạng thái KNOB_OTA_READY: đang chờ nhận header của chunk mới
+    else if (knobState == KNOB_OTA_READY) {
+      // Đảm bảo có ít nhất 4 byte để kiểm tra marker
+      if (OtaSerial.available() >= 4) {
+        uint32_t marker;
+        // Đọc 4 byte marker
+        OtaSerial.readBytes((char*)&marker, sizeof(marker));
+        if (marker != MAGIC_MARKER) {
+          // Nếu không khớp, coi đó là lệnh (có thể là OTA_END, v.v.)
+          // Đọc lại phần còn lại của dòng lệnh cho đến khi gặp '\n'
+          DEBUG_SERIAL.printf("Invalid marker: 0x%08X\n", marker); // Thêm dòng này
+
+          commandBuffer = String((char*)&marker); 
+          commandBuffer += OtaSerial.readStringUntil('\n');
+          commandBuffer.trim();
+          processCommand();
+          continue; // bỏ qua việc xử lý header
+        }
+        // Marker hợp lệ, giờ đọc thêm 8 byte (len và CRC)
+        headerBufferPos = 0;
+        while (headerBufferPos < sizeof(headerBuffer) && OtaSerial.available()) {
+          headerBuffer[headerBufferPos++] = OtaSerial.read();
+        }
+        if (headerBufferPos == sizeof(headerBuffer)) {
+          expectedSize = *(uint32_t*)(&headerBuffer[0]);
+          currentCRC = *(uint32_t*)(&headerBuffer[4]);
+          if (fileBuffer) {
+            free(fileBuffer);
+          }
+          fileBuffer = (uint8_t*) malloc(expectedSize);
+          if (fileBuffer == NULL) {
+            OtaSerial.println("ERR:MEM_ALLOC");
+            abortOTA();
+            return;
+          }
+          filePos = 0;
+          knobState = KNOB_OTA_RECEIVING;
+        }
+      }
+    }
+    // Trạng thái nhận dữ liệu chunk
+    else if (knobState == KNOB_OTA_RECEIVING) {
+      while (OtaSerial.available() && filePos < expectedSize) {
+        fileBuffer[filePos++] = OtaSerial.read();
+      }
+      if (filePos == expectedSize) {
+        processChunk(fileBuffer, expectedSize, currentCRC);
+        free(fileBuffer);
+        fileBuffer = NULL;
+        headerBufferPos = 0;
+        // Sau khi xử lý xong chunk, chuyển về trạng thái nhận header cho chunk tiếp theo
+        knobState = KNOB_OTA_READY;
+      }
+    }
+    lastPacketTime = millis();
+  }
+}
+
+// Hàm kiểm tra timeout OTA
+void checkOTATimeout() {
+  if (knobState != KNOB_IDLE && (millis() - lastPacketTime > OTA_TIMEOUT)) {
+    OtaSerial.println("ERR:TIMEOUT");
+    abortOTA();
+  }
+}
+
+// Task xử lý OTA qua UART
+void OTA_Task(void *param) {
+  for (;;) {
+    handleUART();
+    checkOTATimeout();
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
+void setup() {
+
+   String title = "LVGL porting example";
+#ifdef IM
+  pinMode(IM1, OUTPUT);
+  digitalWrite(IM1, HIGH);
+#ifdef BOARD_VIEWE_ESP_S3_Touch_LCD_35_V2
+  pinMode(IM0, OUTPUT);
+  digitalWrite(IM0, HIGH);
+#endif
+#ifndef BOARD_VIEWE_ESP_S3_Touch_LCD_35_V2
+  pinMode(IM0, OUTPUT);
+  digitalWrite(IM0, LOW);
+#endif
+#endif
+  DEBUG_SERIAL.begin(115200);
+
+  ESP_Panel *panel = new ESP_Panel();
+  panel->init();
+#if LVGL_PORT_AVOID_TEAR
+  // When avoid tearing function is enabled, configure the bus according to the LVGL configuration
+  ESP_PanelBus *lcd_bus = panel->getLcd()->getBus();
+#if ESP_PANEL_LCD_BUS_TYPE == ESP_PANEL_BUS_TYPE_RGB
+  static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbBounceBufferSize(LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE);
+  static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
+#elif ESP_PANEL_LCD_BUS_TYPE == ESP_PANEL_BUS_TYPE_MIPI_DSI
+  static_cast<ESP_PanelBus_DSI *>(lcd_bus)->configDpiFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
+#endif
+#endif
+  panel->begin();
+#ifdef KNOB
+  DEBUG_SERIAL.println(F("Initialize Knob device"));
+  knob = new ESP_Knob(GPIO_NUM_KNOB_PIN_A, GPIO_NUM_KNOB_PIN_B);
+  knob->begin();
+  knob->attachLeftEventCallback(onKnobLeftEventCallback);
+  knob->attachRightEventCallback(onKnobRightEventCallback);
+
+  Button *btn = new Button(GPIO_BUTTON_PIN, false);
+  btn->attachSingleClickEventCb(&SingleClickCb, NULL);
+  btn->attachLongPressHoldEventCb(&LongPressHoldCb, NULL);
+  // btn->attachDoubleClickEventCb(&DoubleClickCb, NULL);
+  // btn->attachLongPressStartEventCb(&LongPressStartCb, NULL);
+#endif
+
+  lvgl_port_init(panel->getLcd(), panel->getTouch());
+  lvgl_port_lock(-1);
+  ui_init();
+
+  DEBUG_SERIAL.print("VERSION");
+  DEBUG_SERIAL.println(VERSION);
+  snprintf(versionKnob, sizeof(versionKnob), "%s", VERSION);
+
+  // Cấu hình OtaSerial: thay đổi các chân RX, TX theo board của bạn (ví dụ: 20, 21)
+  OtaSerial.begin(460800, SERIAL_8N1, 20, 21);
+  
+  delay(200);  
+  
+  nvs_flash_init();
+  DEBUG_SERIAL.println("Knob OTA Receiver Starting");
+  
+  xKnobIDLESemaphore = xSemaphoreCreateBinary();
+
+  // Tạo task OTA
+  xTaskCreate(OTA_Task, "OTA_Task", 8192, NULL, 12, NULL);
+  xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
+  lvgl_port_unlock();
+
+}
+
+void loop() {
+  // Không làm gì ở đây, mọi xử lý nằm trong task OTA_Task
+}
+
+void handleReceivedData(const String &data) {
   lvgl_port_lock(-1);
 
-  // Chuyển String thành mảng char[]
-  strncpy(receivedDataArray, data.c_str(), MAX_LENGTH - 1);
-  receivedDataArray[MAX_LENGTH - 1] = '\0';  // Đảm bảo chuỗi kết thúc đúng
+  if (data.indexOf("v") != -1) {
+    int index = data.indexOf("v");           // Tìm vị trí của 'v'
+    String version = data.substring(index);  // Cắt chuỗi từ 'v' trở đi
+    version.trim();                          // Loại bỏ ký tự xuống dòng, khoảng trắng
 
-  Serial.print("Received Data as char array: ");
-  Serial.println(receivedDataArray);  // In ra để kiểm tra
-
-  // Kiểm tra xem có "v" trong chuỗi không (để cập nhật version)
-  char* vPos = strchr(receivedDataArray, 'v');
-  if (vPos != nullptr) {
-    strncpy(versionBoard, vPos, sizeof(versionBoard) - 1);
-    versionBoard[sizeof(versionBoard) - 1] = '\0';  // Đảm bảo chuỗi kết thúc
+    // Sao chép vào mảng versionBoard
+    memset(versionBoard,0,sizeof(versionBoard));
+    strncpy(versionBoard, version.c_str(), sizeof(versionBoard) - 1);
+    versionBoard[sizeof(versionBoard) - 1] = '\0';  // Đảm bảo kết thúc chuỗi
 
     Serial.print("Extracted version: ");
     Serial.println(versionBoard);
+    save_version_to_nvs(versionBoard, versionKnob);
+    lvgl_port_unlock();
+    return;
   }
 
-  // Kiểm tra và xử lý dữ liệu lỗi
-  if (strlen(receivedDataArray) == 0 || strcmp(receivedDataArray, "X") == 0 || containsSpecialChar(receivedDataArray)) {
-    if (isErrorScreenActive) {
+  if (data.indexOf("IP:") != -1) {  // Nếu tìm thấy
+    int index = data.indexOf("IP:");           // Tìm vị trí của 'v'
+    String ipAddress_str = data.substring(index + 3);  // Cắt từ sau "IP:"
+    ipAddress_str.trim();  // Xóa khoảng trắng, ký tự xuống dòng
+
+    // Sao chép vào mảng ip_address
+    memset(ip_address, 0, sizeof(ip_address));
+    strncpy(ip_address, ipAddress_str.c_str(), sizeof(ip_address) - 1);
+    ip_address[sizeof(ip_address) - 1] = '\0';  // Đảm bảo kết thúc chuỗi
+
+    Serial.print("Extracted IP: ");
+    Serial.println(ip_address);
+    lvgl_port_unlock();
+    return;
+  }
+  if (data == "RESET")
+  {
+    ESP.restart();
+  }
+  if (data.length() == 0 || data == "X" || containsSpecialChar(data)) {  // Không có lỗi
+    if (isErrorScreenActive) {                                           // Nếu đang ở màn hình lỗi thì mới chuyển về ui_main
       isErrorScreenActive = false;
       error_flag = false;
       switch_ui(ui_main, label_notice);
@@ -321,218 +672,51 @@ void handleReceivedData(const String& data) {
 
       strcpy(timerFromKnob, "00:00:00");
       lv_label_set_text(label_time, timerFromKnob);
+      // percentH2FromKnob = 0.0;
+      // savedDataToSend = true;
       exchange_H2Percent();
       lv_label_set_text(label_percent, percentH2_str);
     }
-  } else { 
-    if (!isErrorScreenActive) {
+  } 
+  else {                       // Có lỗi mới
+    if (!isErrorScreenActive) {  // Nếu chưa ở màn hình lỗi thì mới chuyển
       isErrorScreenActive = true;
       switch_ui(ui_display_error, label_error_message);
       stop_countdown();
       knob_state = ERROR;
       error_flag = true;
     }
-    lv_label_set_text(label_error_message, receivedDataArray);
+    lv_label_set_text(label_error_message, data.c_str());  // Cập nhật lỗi
   }
 
   lvgl_port_unlock();
 }
 
-
-void Receive_task(void *param) {
-  for (;;) {
-    lvgl_port_lock(-1);
-    if (MySerial.available() > 0) {
-      String receivedString = MySerial.readStringUntil('\n'); 
-      receivedString.trim();
-      Serial.println(receivedString);
-      handleReceivedData(receivedString);  // Xử lý dữ liệu nhận được
-    }
-    lvgl_port_unlock();
-    vTaskDelay(pdMS_TO_TICKS(50));  // Delay ngắn sau khi nhận dữ liệu
-  } 
-}
-
 void Send_task(void *param) {
   for (;;) {
-    
-    
-    if (savedDataToSend) {
+    if (savedDataToSend && knobState == KNOB_IDLE) {
       lvgl_port_lock(-1);
       Send_data_to_board();
       savedDataToSend = false;
       lvgl_port_unlock();
     }
-    
+
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
 void Send_data_to_board(void) {
-  if (percentH2FromKnob != -1){
-    MySerial.print((percentH2FromKnob *(airFlowRate * 1000)) / 100);
+  if (percentH2FromKnob != -1) {
+    OtaSerial.print((percentH2FromKnob * (airFlowRate * 1000)) / 100);
   }
 }
 
 bool containsSpecialChar(const String &str) {
-    for (size_t i = 0; i < str.length(); i++) {
-        char c = str[i];
-        if (!isalnum(c) && c != ' ' && c != '_') {  
-            return true;  // Có ký tự đặc biệt
-        }
-    }
-    return false;  // Không có ký tự đặc biệt
-}
-
-void OTA_task(void *param) {
-  for (;;) {
-    server.handleClient();
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
-}
-
-
-void setup()
-{
-    const char* title = "LVGL porting example";
-#ifdef IM
-    pinMode(IM1, OUTPUT);
-    digitalWrite(IM1, HIGH);
-  #ifdef BOARD_VIEWE_ESP_S3_Touch_LCD_35_V2
-    pinMode(IM0, OUTPUT);
-    digitalWrite(IM0, HIGH);
-  #endif
-  #ifndef BOARD_VIEWE_ESP_S3_Touch_LCD_35_V2
-    pinMode(IM0, OUTPUT);
-    digitalWrite(IM0, LOW);
-  #endif
-#endif
-
-    Serial.begin(115200);
-    MySerial.begin(9600, SERIAL_8N1, 20, 21);
-    // Serial.println(title + " start");
-
-    Serial.println("Initialize panel device");
-    ESP_Panel *panel = new ESP_Panel();
-    panel->init();
-#if LVGL_PORT_AVOID_TEAR
-    // When avoid tearing function is enabled, configure the bus according to the LVGL configuration
-    ESP_PanelBus *lcd_bus = panel->getLcd()->getBus();
-#if ESP_PANEL_LCD_BUS_TYPE == ESP_PANEL_BUS_TYPE_RGB
-    static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbBounceBufferSize(LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE);
-    static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
-#elif ESP_PANEL_LCD_BUS_TYPE == ESP_PANEL_BUS_TYPE_MIPI_DSI
-    static_cast<ESP_PanelBus_DSI *>(lcd_bus)->configDpiFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
-#endif
-#endif
-    panel->begin();
-#ifdef KNOB
-    Serial.println("Initialize Knob device");
-    knob = new ESP_Knob(GPIO_NUM_KNOB_PIN_A, GPIO_NUM_KNOB_PIN_B);
-    knob->begin();
-    knob->attachLeftEventCallback(onKnobLeftEventCallback);
-    knob->attachRightEventCallback(onKnobRightEventCallback);
-
-    Button *btn = new Button(GPIO_BUTTON_PIN, false);
-    btn->attachSingleClickEventCb(&SingleClickCb, NULL);
-    btn->attachLongPressHoldEventCb(&LongPressHoldCb, NULL);
-    // btn->attachDoubleClickEventCb(&DoubleClickCb, NULL);
-    // btn->attachLongPressStartEventCb(&LongPressStartCb, NULL);
-
-#endif
-
-  Serial.println("Initialize LVGL");
-  lvgl_port_init(panel->getLcd(), panel->getTouch());
-
-  Serial.println("Create UI");
-  /* Lock the mutex due to the LVGL APIs are not thread-safe */
-  lvgl_port_lock(-1);
-
-  ui_init();
-
-  /* Release the mutex */
-  lvgl_port_unlock();
-  nvs_flash_init();
-  // Serial.println(title + " end");
-
-  preferences.begin("wifi_config", false);
-  String stored_ssid = preferences.getString("ssid", "");
-  String stored_password = preferences.getString("password", "");
-
-  if (stored_ssid.length() > 0) {
-    WiFi.begin(stored_ssid.c_str(), stored_password.c_str());
-    unsigned long startAttemptTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
-      delay(500);
-      Serial.print(".");
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nConnected to WiFi!");
-      Serial.print("IP Address: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println("\nWiFi connection failed, switching to AP mode...");
+  for (size_t i = 0; i < str.length(); i++) {
+    char c = str[i];
+    if (!isalnum(c) && c != ' ' && c != '_') {
+      return true;  // Có ký tự đặc biệt
     }
   }
-
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.softAP(ap_ssid, ap_password);
-    Serial.println("Access Point started. Connect to 'ESP32_Setup' and go to 192.168.4.1");
-  }
-
-  server.on("/", HTTP_GET, []() {
-    server.send(200, "text/html", WiFi.status() == WL_CONNECTED ? otaPage : configPage);
-  });
-
-  server.on("/save", HTTP_POST, []() {
-    String new_ssid = server.arg("ssid");
-    String new_password = server.arg("password");
-    if (new_ssid.length() > 0 && new_password.length() > 0) {
-      preferences.putString("ssid", new_ssid);
-      preferences.putString("password", new_password);
-      server.send(200, "text/html", "Saved! Restarting ESP32...");
-      delay(1000);
-      ESP.restart();
-    } else {
-      server.send(400, "text/html", "Invalid input. Try again.");
-    }
-  });
-
-  server.on("/update", HTTP_POST, []() {
-    server.sendHeader("Connection", "close");
-    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-    ESP.restart();
-  }, []() {
-    HTTPUpload& upload = server.upload();
-    if (upload.status == UPLOAD_FILE_START) {
-      Serial.printf("Update: %s\n", upload.filename.c_str());
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-        Update.printError(Serial);
-      }
-    } else if (upload.status == UPLOAD_FILE_WRITE) {
-      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-        Update.printError(Serial);
-      }
-    } else if (upload.status == UPLOAD_FILE_END) {
-      if (Update.end(true)) {
-        Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
-      } else {
-        Update.printError(Serial);
-      }
-    }
-  });
-
-  server.begin();
-  Serial.print("Version Knob: ");
-  Serial.println(version);
-
-
-  xTaskCreate(Receive_task, "Receive_task", 10000, NULL, 6, NULL);
-  xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
-  xTaskCreate(OTA_task, "OTA_task", 4096, NULL, 5, NULL);
-}
-
-void loop()
-{
-  delay(1);
+  return false;  // Không có ký tự đặc biệt
 }
