@@ -6,7 +6,7 @@
 #include <Preferences.h>
 #include <Update.h>
 
-const char* version = "v18.3.1";
+const char* version = "v26.5.1";
 Preferences preferences;
 WebServer server(80);
 
