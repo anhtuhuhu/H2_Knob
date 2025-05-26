@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include <ESP_Panel_Library.h>
 #include <lvgl.h>
 #include "lvgl_port_v8.h"
@@ -6,7 +5,7 @@
 #include "nvs_flash.h"
 #include <Update.h>
 
-#define VERSION "v17.5.1"
+#define VERSION "v26.5.1"
 
 //==================================================================================================
 #ifdef KNOB21
@@ -43,18 +42,17 @@ bool stop_countdown_flag = false;
 uint8_t error_flag = false;
 extern knob_state_t knob_state;
 extern countdown_state_t countdown_state;
-SemaphoreHandle_t xKnobIDLESemaphore;
 //=====================================================================
 
 void onKnobLeftEventCallback(int count, void *usr_data) {
-  Serial.printf("Detect left event, count is %d\n", count);
+  // Serial.printf("Detect left event, count is %d\n", count);
   lvgl_port_lock(-1);
   LVGL_knob_event((void *)KNOB_LEFT);
   lvgl_port_unlock();
 }
 
 void onKnobRightEventCallback(int count, void *usr_data) {
-  Serial.printf("Detect right event, count is %d\n", count);
+  // Serial.printf("Detect right event, count is %d\n", count);
   lvgl_port_lock(-1);
   LVGL_knob_event((void *)KNOB_RIGHT);
   lvgl_port_unlock();
@@ -552,8 +550,6 @@ void OTA_Task(void *param) {
 }
 
 void setup() {
-
-   String title = "LVGL porting example";
 #ifdef IM
   pinMode(IM1, OUTPUT);
   digitalWrite(IM1, HIGH);
@@ -611,7 +607,7 @@ void setup() {
   nvs_flash_init();
   DEBUG_SERIAL.println("Knob OTA Receiver Starting");
   
-  xKnobIDLESemaphore = xSemaphoreCreateBinary();
+  // xKnobIDLESemaphore = xSemaphoreCreateBinary();
 
   // Tạo task OTA
   xTaskCreate(OTA_Task, "OTA_Task", 8192, NULL, 12, NULL);
@@ -663,6 +659,7 @@ void handleReceivedData(const String &data) {
   {
     ESP.restart();
   }
+  
   if (data.length() == 0 || data == "X" || containsSpecialChar(data)) {  // Không có lỗi
     if (isErrorScreenActive) {                                           // Nếu đang ở màn hình lỗi thì mới chuyển về ui_main
       isErrorScreenActive = false;

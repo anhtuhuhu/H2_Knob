@@ -119,7 +119,7 @@ uint8_t have_set_h2_percent = true;
 char versionBoard[10] = " ";
 char versionKnob[10] = " ";
 char ip_address[20] = " ";
-
+static uint32_t last_knob_event_time = 0;
 #pragma endregion VARIABLES
 // IMAGES AND IMAGE SETS
 #pragma region TEST LVGL SETTINGS
@@ -136,6 +136,9 @@ char ip_address[20] = " ";
 //********************************* */
 void LVGL_knob_event(void *event)
 {
+    uint32_t now = millis();
+    if (now - last_knob_event_time < 20) return; // Bỏ qua nếu < 50ms
+    last_knob_event_time = now;
     int knob_event = (int)event; // Ép kiểu event về số nguyên
     ESP_LOGI(TAG, "HF---Read knob event: %d", knob_event);
     ESP_LOGI(TAG, "knob_state: %d", knob_state);
@@ -172,7 +175,9 @@ void LVGL_knob_event(void *event)
         case TIME_SELECTED:
         {
             increase_timer();
+            // lvgl_port_lock(-1);
             update_setting_timer_labels();
+            // lvgl_port_unlock();
         }
         break;
 
@@ -180,7 +185,9 @@ void LVGL_knob_event(void *event)
         {
             percentH2FromKnob = fmin(percentH2FromKnob + 0.1, PERCENT_H2_MAX);
             exchange_H2Percent();
+            // lvgl_port_lock(-1);
             lv_label_set_text(label_percent, percentH2_str);
+            // lvgl_port_unlock();
         }
         break;
 
@@ -189,22 +196,28 @@ void LVGL_knob_event(void *event)
             airFlowRate = fmin(airFlowRate + 0.5, AIR_FLOWRATE_MAX);
 
             exchange_AirFlowRate();
+            // lvgl_port_lock(-1);
             lv_label_set_text(label_air_flowrate, airFlowRate_str);
+            // lvgl_port_unlock();
         }
         break;
 
         case SETTING:
         {
             knob_setting = (knob_setting + 1 > SETTING_MAX_OPTION) ? OPTION_1 : knob_setting + 1;
+            // lvgl_port_lock(-1);
             update_setting_labels(knob_setting);
+            // lvgl_port_unlock();
         }
         break;
-        
+
         default:
             break;
         }
         if (knob_state == SELECTION_STATE || knob_state == SELECTION_TIME || knob_state == SELECTION_H2) {
+            // lvgl_port_lock(-1);
             update_selection_ui(knob_state);
+            //lvgl_port_unlock();
         }
     }
 #pragma endregion KNOB_LEFT
@@ -242,7 +255,9 @@ void LVGL_knob_event(void *event)
         case TIME_SELECTED:
         {
             decrease_timer();
+            //lvgl_port_lock(-1);
             update_setting_timer_labels();
+            //lvgl_port_unlock();
         }
         break;
 
@@ -251,7 +266,9 @@ void LVGL_knob_event(void *event)
             percentH2FromKnob = fmax(percentH2FromKnob - 0.1, 0.0);
 
             exchange_H2Percent();
+            //lvgl_port_lock(-1);
             lv_label_set_text(label_percent, percentH2_str);
+            //lvgl_port_unlock();
         }
         break;
 
@@ -260,22 +277,28 @@ void LVGL_knob_event(void *event)
             airFlowRate = fmax(airFlowRate - 0.5, AIR_FLOWRATE_MIN);
 
             exchange_AirFlowRate();
+            //lvgl_port_lock(-1);
             lv_label_set_text(label_air_flowrate, airFlowRate_str);
+            //lvgl_port_unlock();
         }
         break;
 
         case SETTING:
         {
             knob_setting = (knob_setting - 1 < OPTION_1) ? OPTION_3 : knob_setting - 1;
+            //lvgl_port_lock(-1);
             update_setting_labels(knob_setting);
+            //lvgl_port_unlock();
         }
         break;
-        
+
         default:
             break;
         }
         if (knob_state == SELECTION_STATE || knob_state == SELECTION_TIME || knob_state == SELECTION_H2) {
+            //lvgl_port_lock(-1);
             update_selection_ui(knob_state);
+            //lvgl_port_unlock();
         }
 
     }
@@ -716,6 +739,10 @@ void update_label(lv_obj_t *label, int font_size, lv_color_t color) {
 }
 
 void update_selection_ui(int selected_state) {
+    static int last_state = -1;
+    if (last_state == selected_state) return; // Bỏ qua nếu không thay đổi
+    last_state = selected_state;
+
     // State icon
     lv_label_set_text(state_icon, ICON_STOP);
 
