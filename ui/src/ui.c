@@ -51,6 +51,7 @@ lv_obj_t *ui_setting_timer;
 lv_obj_t *label_set_timer;
 lv_obj_t *label_hour;
 lv_obj_t *label_minute;
+lv_obj_t *label_second;
 lv_obj_t *label_colons;
 lv_obj_t *label_notice;
 
@@ -105,8 +106,8 @@ lv_anim_t anim_2;
 lv_obj_t *ui____initial_actions0;
 
 // CUSTOM VARIABLES
-knob_state_t knob_state = STOP;
-knob_selection_state_t knob_selection_state;
+knob_state_t knob_state = SELECTION_STATE;
+knob_selection_state_t knob_selection_state = PAUSE;
 knob_selection_time_t knob_selection_time = TIME_IDLE;
 knob_setting_t knob_setting = OPTION_IDLE;
 countdown_state_t countdown_state = COUNTDOWN_STOP;
@@ -137,7 +138,7 @@ static uint32_t last_knob_event_time = 0;
 void LVGL_knob_event(void *event)
 {
     uint32_t now = millis();
-    if (now - last_knob_event_time < 20) return; // Bỏ qua nếu < 50ms
+    if (now - last_knob_event_time < 50) return; // Bỏ qua nếu < 20ms
     last_knob_event_time = now;
     int knob_event = (int)event; // Ép kiểu event về số nguyên
     ESP_LOGI(TAG, "HF---Read knob event: %d", knob_event);
@@ -146,6 +147,11 @@ void LVGL_knob_event(void *event)
     if (knob_event == KNOB_LEFT)
     {
         ESP_LOGI(TAG, "KNOB_LEFT detected");
+        if (knob_selection_state == RESUME)
+        {
+            return;
+        }
+        
         // Dash board selection
         switch (knob_state)
         {
@@ -165,7 +171,6 @@ void LVGL_knob_event(void *event)
         break;
 
         case SELECTION_H2:
-        case STOP:
         {
             knob_state = SELECTION_STATE;
             knob_selection_state = PAUSE;
@@ -226,6 +231,10 @@ void LVGL_knob_event(void *event)
     if (knob_event == KNOB_RIGHT)
     {
         ESP_LOGI(TAG, "KNOB_RIGHT detected");
+        if (knob_selection_state == RESUME)
+        {
+            return;
+        }
 
         switch (knob_state)
         {
@@ -245,7 +254,6 @@ void LVGL_knob_event(void *event)
         break;
 
         case SELECTION_TIME:
-        case STOP:
         {
             knob_state = SELECTION_STATE;
             knob_selection_state = PAUSE;
@@ -335,10 +343,12 @@ void LVGL_button_event(void *event)
                 savedDataToSend = true;
 
                 // Cập nhật trạng thái
-                knob_state = STOP;
-                lv_label_set_text(state_icon, ICON_STOP);
-                set_font(state_icon, FONT_SIZE_STATE_NORMAL);
-                set_color(state_icon, COLOR_WHITE);
+                knob_state = SELECTION_STATE;
+                update_selection_ui(knob_state);
+                knob_selection_state = PAUSE;
+                // lv_label_set_text(state_icon, ICON_STOP);
+                // set_font(state_icon, FONT_SIZE_STATE_NORMAL);
+                // set_color(state_icon, COLOR_WHITE);
 
                 // Kiểm tra nếu chưa đặt thời gian thì đặt lại trạng thái
                 have_set_timer = (strcmp(timerFromKnob, "00:00:00") != 0);
@@ -535,7 +545,6 @@ void LVGL_button_event(void *event)
         else if (knob_state == SHOW_QR)
         {
             knob_state = ERROR;
-            // lv_obj_del(qr_code);
             lv_obj_clear_flag(label_warning, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(label_error_message, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(label_info, LV_OBJ_FLAG_HIDDEN);
@@ -661,20 +670,22 @@ void LVGL_button_event(void *event)
             }
             else if (knob_setting == OPTION_IDLE)
             {
-                knob_state = STOP;
+                knob_state = SELECTION_STATE;
+                knob_selection_state = PAUSE;
+                update_selection_ui(knob_state);
 
                 // state_icon
 
-                lv_label_set_text(state_icon, ICON_STOP);
-                set_font(state_icon, FONT_SIZE_STATE_NORMAL);
-                set_color(state_icon, COLOR_WHITE);
+                // lv_label_set_text(state_icon, ICON_STOP);
+                // set_font(state_icon, FONT_SIZE_STATE_NORMAL);
+                // set_color(state_icon, COLOR_WHITE);
 
-                // label_time
-                set_font(label_time, FONT_SIZE_TIME_NORMAL);
-                set_color(label_time, COLOR_WHITE);
-                // label_percent
-                set_font(label_percent, FONT_SIZE_PERCENT_NORMAL);
-                set_color(label_percent, COLOR_WHITE);
+                // // label_time
+                // set_font(label_time, FONT_SIZE_TIME_NORMAL);
+                // set_color(label_time, COLOR_WHITE);
+                // // label_percent
+                // set_font(label_percent, FONT_SIZE_PERCENT_NORMAL);
+                // set_color(label_percent, COLOR_WHITE);
 
                 switch_ui(ui_main, label_notice);
             }
@@ -740,7 +751,8 @@ void update_label(lv_obj_t *label, int font_size, lv_color_t color) {
 
 void update_selection_ui(int selected_state) {
     static int last_state = -1;
-    if (last_state == selected_state) return; // Bỏ qua nếu không thay đổi
+    if (last_state == selected_state && selected_state != SELECTION_STATE) return; // Bỏ qua nếu không thay đổi
+    ESP_LOGI(TAG, "Start update_selection_ui");
     last_state = selected_state;
 
     // State icon
@@ -779,7 +791,7 @@ void update_setting_labels(int setting) {
 
 void reset_ui()
 {
-    knob_state = STOP;
+    knob_state = SELECTION_STATE;
     knob_selection_state = PAUSE;
     knob_selection_time = TIME_IDLE;
     have_set_timer = (strcmp(timerFromKnob, "00:00:00") != 0);
@@ -791,13 +803,8 @@ void reset_ui()
     }
     delete_animation(arc1);
     delete_animation(arc2);
-    // lv_arc_set_value(arc, 0);
-    lv_label_set_text(state_icon, ICON_STOP);
-    set_font(state_icon, FONT_SIZE_STATE_NORMAL);
-    set_color(state_icon, COLOR_WHITE);
-    set_font(label_time, FONT_SIZE_TIME_NORMAL);
-    set_color(label_time, COLOR_WHITE);
-    set_font(label_percent, FONT_SIZE_PERCENT_NORMAL);
+
+    update_selection_ui(knob_state);
 }
 
 void switch_ui(lv_obj_t *screen, lv_obj_t *label)

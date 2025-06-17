@@ -63,6 +63,7 @@ extern "C"
     extern lv_obj_t *label_set_timer;
     extern lv_obj_t *label_hour;
     extern lv_obj_t *label_minute;
+    extern lv_obj_t *label_second;
     extern lv_obj_t *label_colons;
     extern lv_obj_t *label_notice;
 
@@ -137,8 +138,6 @@ extern "C"
     typedef enum
     {
         ERROR = -1,
-        STOP,
-        RUNNING,
         SELECTION_STATE,
         SELECTION_TIME,
         TIME_SELECTED,
@@ -219,7 +218,8 @@ extern "C"
     void update_setting_timer_labels(void);
     void start_animation(lv_anim_t anim, lv_obj_t *arc);
     void delete_animation(lv_obj_t *arc);
-
+    void update_label(lv_obj_t *label, int font_size, lv_color_t color);
+    void update_selection_ui(int selected_state);
 #ifdef __cplusplus
 } /*extern "C"*/
 #endif

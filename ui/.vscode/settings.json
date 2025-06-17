@@ -11,5 +11,6 @@
         "xstring": "c",
         "xutility": "c",
         "xtr1common": "c"
-    }
+    },
+    "cmake.sourceDirectory": "C:/Users/ADMIN/OneDrive/Documents/Arduino/libraries/ui/src"
 }

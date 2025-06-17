@@ -5,7 +5,7 @@
 #include "nvs_flash.h"
 #include <Update.h>
 
-#define VERSION "v26.5.1"
+#define VERSION "v17.6.0"
 
 //==================================================================================================
 #ifdef KNOB21
@@ -43,16 +43,14 @@ uint8_t error_flag = false;
 extern knob_state_t knob_state;
 extern countdown_state_t countdown_state;
 //=====================================================================
-
+ 
 void onKnobLeftEventCallback(int count, void *usr_data) {
-  // Serial.printf("Detect left event, count is %d\n", count);
   lvgl_port_lock(-1);
   LVGL_knob_event((void *)KNOB_LEFT);
   lvgl_port_unlock();
 }
 
 void onKnobRightEventCallback(int count, void *usr_data) {
-  // Serial.printf("Detect right event, count is %d\n", count);
   lvgl_port_lock(-1);
   LVGL_knob_event((void *)KNOB_RIGHT);
   lvgl_port_unlock();
@@ -595,6 +593,8 @@ void setup() {
   lvgl_port_lock(-1);
   ui_init();
 
+  update_selection_ui(knob_state);
+
   DEBUG_SERIAL.print("VERSION");
   DEBUG_SERIAL.println(VERSION);
   snprintf(versionKnob, sizeof(versionKnob), "%s", VERSION);
@@ -610,10 +610,10 @@ void setup() {
   // xKnobIDLESemaphore = xSemaphoreCreateBinary();
 
   // Tạo task OTA
-  xTaskCreate(OTA_Task, "OTA_Task", 8192, NULL, 12, NULL);
-  xTaskCreate(Send_task, "Send_task", 8192, NULL, 5, NULL);
+  xTaskCreate(OTA_Task, "OTA_Task", 10000, NULL, 12, NULL);
+  xTaskCreate(Send_task, "Send_task", 4096, NULL, 5, NULL);
+  
   lvgl_port_unlock();
-
 }
 
 void loop() {
@@ -692,10 +692,10 @@ void handleReceivedData(const String &data) {
 void Send_task(void *param) {
   for (;;) {
     if (savedDataToSend && knobState == KNOB_IDLE) {
-      lvgl_port_lock(-1);
+      // lvgl_port_lock(-1);
       Send_data_to_board();
       savedDataToSend = false;
-      lvgl_port_unlock();
+      // lvgl_port_unlock();
     }
 
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -703,8 +703,20 @@ void Send_task(void *param) {
 }
 
 void Send_data_to_board(void) {
+  char buffer[64];
+
   if (percentH2FromKnob != -1) {
-    OtaSerial.print((percentH2FromKnob * (airFlowRate * 1000)) / 100);
+    
+    snprintf(buffer, sizeof(buffer), "H2_Percent:%.2f", percentH2FromKnob * 100.0);
+    OtaSerial.println(buffer);
+    Serial.println("Send h2 percent");
+  }
+
+  if (timerFromKnob != NULL) {
+    
+    snprintf(buffer, sizeof(buffer), "Timer:%s", timerFromKnob);
+    OtaSerial.println(buffer);
+    Serial.println("Send timer");
   }
 }
 
