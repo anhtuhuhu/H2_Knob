@@ -1,10 +1,12 @@
+#include "WString.h"
+#include <stdint.h>
 #ifndef _H2_INHALLER_MACHINE_H
 #define _H2_INHALLER_MACHINE_H
 
-#define VERSION "v17.6.1"
+#define VERSION "v1.8.0"
 
-#define UART1_RX_PIN GPIO_NUM_44
-#define UART1_TX_PIN GPIO_NUM_43
+#define UART2_RX_PIN GPIO_NUM_1
+#define UART2_TX_PIN GPIO_NUM_2
 
 #define WATER_PUMP_PIN GPIO_NUM_4
 #define AIR_PUMP_PIN GPIO_NUM_5
@@ -19,7 +21,11 @@
 
 #define SENSOR_READ_TIME 1000  // 1s
 
-#define COCAMBIEN
+#define MQTT_TOPIC_MAX_LEN 64
+
+// #define DEBUG
+
+// #define NO_SENSOR
 
 
 

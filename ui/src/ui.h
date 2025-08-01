@@ -108,6 +108,9 @@ extern "C"
     extern void resume_countdown();
     extern uint8_t error_flag;
     extern uint8_t have_set_timer;
+    extern uint8_t have_set_h2_percent;
+    extern uint8_t have_new_timer;
+    extern char last_setting_timer[10];
     extern void save_data_to_nvs(char *timer, float *_h2_percent);
     extern void get_data_from_nvs(char *timer, float *_h2_percent);
     extern void save_version_to_nvs(char *versionBoard, char *versionKnob);
@@ -209,8 +212,8 @@ extern "C"
     void ui_init(void);
     void LVGL_knob_event(void *event);
     void LVGL_button_event(void *event);
-    void exchange_H2Percent(void);
-    void exchange_AirFlowRate(void);
+    void exchange_H2Percent(float percent);
+    void exchange_AirFlowRate(float flowRate);
     void set_font(lv_obj_t *obj, const lv_font_t *font);
     void set_color(lv_obj_t *obj, lv_color_t color);
     void reset_ui(void);
@@ -220,6 +223,8 @@ extern "C"
     void delete_animation(lv_obj_t *arc);
     void update_label(lv_obj_t *label, int font_size, lv_color_t color);
     void update_selection_ui(int selected_state);
+    void parsePercentage(void);
+    void update_data_to_ui(uint8_t state, char* timer, float percent, float airFlowRate);
 #ifdef __cplusplus
 } /*extern "C"*/
 #endif

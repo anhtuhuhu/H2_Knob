@@ -14,7 +14,7 @@ void ui_main_screen_init(void)
     // get data from NVS
     get_data_from_nvs(timerFromKnob, &percentH2FromKnob);
     // exchange data to string
-    exchange_H2Percent();                                               
+    exchange_H2Percent(percentH2FromKnob);                                               
 
     // create background image object
     bg_img = lv_img_create(ui_main);                                    

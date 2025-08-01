@@ -109,7 +109,7 @@ lv_obj_t *ui____initial_actions0;
 knob_state_t knob_state = SELECTION_STATE;
 knob_selection_state_t knob_selection_state = PAUSE;
 knob_selection_time_t knob_selection_time = TIME_IDLE;
-knob_setting_t knob_setting = OPTION_IDLE;
+knob_setting_t knob_setting = OPTION_1;
 countdown_state_t countdown_state = COUNTDOWN_STOP;
 // knob_state_t knob_state = STOP;
 
@@ -121,6 +121,8 @@ char versionBoard[10] = " ";
 char versionKnob[10] = " ";
 char ip_address[20] = " ";
 static uint32_t last_knob_event_time = 0;
+char last_setting_timer[10];
+uint8_t have_new_timer = false;
 #pragma endregion VARIABLES
 // IMAGES AND IMAGE SETS
 #pragma region TEST LVGL SETTINGS
@@ -189,7 +191,7 @@ void LVGL_knob_event(void *event)
         case H2_SELECTED:
         {
             percentH2FromKnob = fmin(percentH2FromKnob + 0.1, PERCENT_H2_MAX);
-            exchange_H2Percent();
+            exchange_H2Percent(percentH2FromKnob);
             // lvgl_port_lock(-1);
             lv_label_set_text(label_percent, percentH2_str);
             // lvgl_port_unlock();
@@ -200,7 +202,7 @@ void LVGL_knob_event(void *event)
         {
             airFlowRate = fmin(airFlowRate + 0.5, AIR_FLOWRATE_MAX);
 
-            exchange_AirFlowRate();
+            exchange_AirFlowRate(airFlowRate);
             // lvgl_port_lock(-1);
             lv_label_set_text(label_air_flowrate, airFlowRate_str);
             // lvgl_port_unlock();
@@ -273,7 +275,7 @@ void LVGL_knob_event(void *event)
         {
             percentH2FromKnob = fmax(percentH2FromKnob - 0.1, 0.0);
 
-            exchange_H2Percent();
+            exchange_H2Percent(percentH2FromKnob);
             //lvgl_port_lock(-1);
             lv_label_set_text(label_percent, percentH2_str);
             //lvgl_port_unlock();
@@ -284,7 +286,7 @@ void LVGL_knob_event(void *event)
         {
             airFlowRate = fmax(airFlowRate - 0.5, AIR_FLOWRATE_MIN);
 
-            exchange_AirFlowRate();
+            exchange_AirFlowRate(airFlowRate);
             //lvgl_port_lock(-1);
             lv_label_set_text(label_air_flowrate, airFlowRate_str);
             //lvgl_port_unlock();
@@ -320,6 +322,7 @@ void LVGL_button_event(void *event)
 {
     static uint8_t last_event = BUTTON_PRESS_DOWN;
     int btn_event = (int)event;
+    static uint8_t go_to_setting = 0;
 
     ESP_LOGD(TAG, "HF---Read event: %d", btn_event);
 
@@ -339,7 +342,7 @@ void LVGL_button_event(void *event)
             if (knob_selection_state == RESUME)
             {
                 // Gửi H2 = 0% tới board
-                percentH2FromKnob = 0.0;
+                // percentH2FromKnob = 0.0;
                 savedDataToSend = true;
 
                 // Cập nhật trạng thái
@@ -561,13 +564,9 @@ void LVGL_button_event(void *event)
             }
 
             knob_state = SETTING;
-            knob_setting = OPTION_IDLE;
+            knob_setting = OPTION_1;
 
-            set_color(label_option_calib, COLOR_WHITE);
-            set_font(label_option_calib, FONT_SIZE_OPTION_NORMAL);
-
-            set_color(label_option_version, COLOR_WHITE);
-            set_font(label_option_version, FONT_SIZE_OPTION_NORMAL);
+            update_setting_labels(knob_setting);
 
             switch_ui(ui_setting, label_setting);
             save_calib_data_to_nvs(airFlowRate_str);
@@ -576,13 +575,9 @@ void LVGL_button_event(void *event)
         else if (knob_state == SHOW_VERSION)
         {
             knob_state = SETTING;
-            knob_setting = OPTION_IDLE;
+            knob_setting = OPTION_1;
 
-            set_color(label_option_calib, COLOR_WHITE);
-            set_font(label_option_calib, FONT_SIZE_OPTION_NORMAL);
-
-            set_color(label_option_version, COLOR_WHITE);
-            set_font(label_option_version, FONT_SIZE_OPTION_NORMAL);
+            update_setting_labels(knob_setting);
 
             switch_ui(ui_setting, label_setting);
             return;
@@ -590,16 +585,9 @@ void LVGL_button_event(void *event)
         else if (knob_state == SHOW_IP)
         {
             knob_state = SETTING;
-            knob_setting = OPTION_IDLE;
+            knob_setting = OPTION_1;
 
-            set_color(label_option_calib, COLOR_WHITE);
-            set_font(label_option_calib, FONT_SIZE_OPTION_NORMAL);
-
-            set_color(label_option_version, COLOR_WHITE);
-            set_font(label_option_version, FONT_SIZE_OPTION_NORMAL);
-
-            set_color(label_option_ip, COLOR_WHITE);
-            set_font(label_option_ip, FONT_SIZE_OPTION_NORMAL);
+            update_setting_labels(knob_setting);
 
             switch_ui(ui_setting, label_setting);
             return;
@@ -673,20 +661,6 @@ void LVGL_button_event(void *event)
                 knob_state = SELECTION_STATE;
                 knob_selection_state = PAUSE;
                 update_selection_ui(knob_state);
-
-                // state_icon
-
-                // lv_label_set_text(state_icon, ICON_STOP);
-                // set_font(state_icon, FONT_SIZE_STATE_NORMAL);
-                // set_color(state_icon, COLOR_WHITE);
-
-                // // label_time
-                // set_font(label_time, FONT_SIZE_TIME_NORMAL);
-                // set_color(label_time, COLOR_WHITE);
-                // // label_percent
-                // set_font(label_percent, FONT_SIZE_PERCENT_NORMAL);
-                // set_color(label_percent, COLOR_WHITE);
-
                 switch_ui(ui_main, label_notice);
             }
 
@@ -696,27 +670,36 @@ void LVGL_button_event(void *event)
         
     }
 
-    if (btn_event == BUTTON_LONG_PRESS_HOLD)
+    if (btn_event == BUTTON_LONG_PRESS_HOLD && last_event != BUTTON_LONG_PRESS_HOLD)
     {
         ESP_LOGD(TAG, "BUTTON_LONG_PRESS_HOLD");
-        if (lv_scr_act() != ui_setting)
+        if (lv_scr_act() != ui_setting && knob_state != SETTING && !go_to_setting)
         {
+            go_to_setting = 1;
             knob_state = SETTING;
-
-            set_color(label_option_calib, COLOR_WHITE);
-            set_font(label_option_calib, FONT_SIZE_OPTION_NORMAL);
-
-            set_color(label_option_version, COLOR_WHITE);
-            set_font(label_option_version, FONT_SIZE_OPTION_NORMAL);
-
-            set_color(label_option_ip, COLOR_WHITE);
-            set_font(label_option_ip, FONT_SIZE_OPTION_NORMAL);
-
+            knob_setting = OPTION_1;
             switch_ui(ui_setting, label_setting);
+            update_setting_labels(knob_setting);
         }
+
+        else if (lv_scr_act() == ui_setting && knob_state == SETTING && go_to_setting)
+        {
+            go_to_setting = 0;
+            knob_state = SELECTION_STATE;
+            knob_selection_state = PAUSE;
+            switch_ui(ui_main, label_notice);
+            update_selection_ui(knob_state);
+        }
+        
 
         last_event = BUTTON_LONG_PRESS_HOLD;
 
+        return;
+    }
+
+    if (btn_event == BUTTON_LONG_PRESS_UP && last_event != BUTTON_LONG_PRESS_UP)
+    {
+        last_event = BUTTON_LONG_PRESS_UP;
         return;
     }
 }
@@ -724,12 +707,12 @@ void LVGL_button_event(void *event)
 //********************************* */
 #pragma region CUSTOM_FUNCTION
 //********************************* */
-void exchange_H2Percent()
+void exchange_H2Percent(float percent)
 {
-    sprintf(percentH2_str, "%.1f%%", percentH2FromKnob);
+    sprintf(percentH2_str, "%.1f%%", percent);
 }
 
-void exchange_AirFlowRate()
+void exchange_AirFlowRate(float airFlowRate)
 {
     sprintf(airFlowRate_str, "%.1fL/min", airFlowRate);
 }
@@ -871,7 +854,7 @@ void decrease_timer()
     sprintf(timerFromKnob, "%02d:%02d:%02d", hour, minute, second);
 }
 
-void parsePercentage()
+void parsePercentage(void)
 {
     char *endptr;
     percentH2FromKnob = strtof(percentH2_str, &endptr);
@@ -892,6 +875,33 @@ void update_arc()
 {
     int hour = (timerFromKnob[0] - '0') * 10 + (timerFromKnob[1] - '0'); // Lấy giờ
     lv_arc_set_value(arc, hour);                                         // Set giá trị cho Arc
+}
+
+void update_data_to_ui(uint8_t state, char* timer, float percent, float airFlowRate) {
+    knob_selection_state = (state == 0) ? PAUSE : RESUME;
+    if (knob_selection_state == PAUSE) {
+        lv_label_set_text(state_icon, ICON_STOP);
+    }
+    else {
+        lv_label_set_text(state_icon, ICON_RESUME);
+    }
+    
+    if (strcmp(timer, last_setting_timer) != 0)
+    {
+        strncpy(timerFromKnob, timer, sizeof(timerFromKnob) - 1);
+        timerFromKnob[sizeof(timerFromKnob) - 1] = '\0';
+        lv_label_set_text(label_time, timerFromKnob);
+
+        strncpy(last_setting_timer, timerFromKnob, sizeof(last_setting_timer) - 1);
+        last_setting_timer[sizeof(last_setting_timer) - 1] = '\0';
+        have_new_timer = true;
+    }
+    
+    exchange_H2Percent(percent);
+    lv_label_set_text(label_percent, percentH2_str);
+
+    exchange_AirFlowRate(airFlowRate);
+    lv_label_set_text(label_air_flowrate, airFlowRate_str);
 }
 
 void start_animation(lv_anim_t anim, lv_obj_t *arc)
@@ -951,5 +961,7 @@ void ui_init(void)
     ui_main_screen_init();
     ui____initial_actions0 = lv_obj_create(NULL);
     lv_disp_load_scr(ui_main);
+
+    update_selection_ui(knob_state);
 }
 #pragma endregion UI_INIT

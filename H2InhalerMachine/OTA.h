@@ -10,9 +10,14 @@
 class OTA {
 
 private:
-  String currentTarget = "";
-  String filterResponse(String response);
-  uint32_t crc32(const uint8_t* data, size_t length);
+  static inline String currentTarget = "";
+  static String filterResponse(String response);
+  static uint32_t crc32(const uint8_t* data, size_t length);
+  static bool startKnobOTA();
+  static void sendChunkToKnob(uint8_t* data, size_t len);
+  static bool waitForKnobResponse(const char* expected, uint32_t timeout);
+  // static const char* configPage;
+
 public:
   // OTA state
   enum OTAState {
@@ -21,14 +26,11 @@ public:
     OTA_SENDING,
     OTA_END
   };
-  OTAState otaState = OTA_IDLE;
+  static inline OTAState otaState = OTA_IDLE;
 
   void handleRoot(void);
   void handleUpdate(void);
   void handleUpload(void);
-  void sendChunkToKnob(uint8_t* data, size_t len);
-  bool waitForKnobResponse(const char* expected, uint32_t timeout);
-
 
 };
 

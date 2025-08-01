@@ -4,8 +4,9 @@
 #include "driver/timer.h"
 #include "nvs_flash.h"
 #include <Update.h>
+#include <ArduinoJson.h>
 
-#define VERSION "v17.6.0"
+#define VERSION "v1.8.0"
 
 //==================================================================================================
 #ifdef KNOB21
@@ -40,17 +41,23 @@ bool isErrorScreenActive = false;
 TaskHandle_t countdown_task_handle = NULL;
 bool stop_countdown_flag = false;
 uint8_t error_flag = false;
+uint8_t state;
+int total_seconds;
+
 extern knob_state_t knob_state;
 extern countdown_state_t countdown_state;
+extern knob_selection_state_t knob_selection_state;
 //=====================================================================
  
 void onKnobLeftEventCallback(int count, void *usr_data) {
+  Serial.printf("Detect left event, count is %d\n", count);
   lvgl_port_lock(-1);
   LVGL_knob_event((void *)KNOB_LEFT);
   lvgl_port_unlock();
 }
 
 void onKnobRightEventCallback(int count, void *usr_data) {
+  Serial.printf("Detect right event, count is %d\n", count);
   lvgl_port_lock(-1);
   LVGL_knob_event((void *)KNOB_RIGHT);
   lvgl_port_unlock();
@@ -64,8 +71,16 @@ static void SingleClickCb(void *button_handle, void *usr_data) {
 }
 
 static void LongPressHoldCb(void *button_handle, void *usr_data) {
+  Serial.println("Button Long Press Hold");
   lvgl_port_lock(-1);
   LVGL_button_event((void *)BUTTON_LONG_PRESS_HOLD);
+  lvgl_port_unlock();
+}
+
+static void LongPressUpCb(void *button_handle, void *usr_data) {
+  Serial.println("Button Long Press Up");
+  lvgl_port_lock(-1);
+  LVGL_button_event((void *)BUTTON_LONG_PRESS_UP);
   lvgl_port_unlock();
 }
 
@@ -271,13 +286,14 @@ void get_calib_data_to_nvs(char *airFlowRate_str) {
 
 // Task đếm ngược thời gian
 void countdown_task(void *pvParameters) {
+  Serial.println("Timer befor countdown: " + String(timerFromKnob));
   int hour = (timerFromKnob[0] - '0') * 10 + (timerFromKnob[1] - '0');
   int minute = (timerFromKnob[3] - '0') * 10 + (timerFromKnob[4] - '0');
   int second = (timerFromKnob[6] - '0') * 10 + (timerFromKnob[7] - '0');
   if (second != 0) second = 0;
-  int total_seconds = hour * 3600 + minute * 60 + second;
-
+  total_seconds = hour * 3600 + minute * 60 + second;
   while (total_seconds > 0) {
+    
     vTaskDelay(pdMS_TO_TICKS(950));  // Delay 1 giây
     if (stop_countdown_flag) break;
     total_seconds--;
@@ -312,6 +328,7 @@ void update_display(int hour, int minute, int second) {
 }
 
 void start_countdown() {
+  Serial.println("Start...");
   stop_countdown_flag = false;
 
   // if (countdown_task_handle == NULL) {
@@ -321,27 +338,30 @@ void start_countdown() {
 }
 
 void pause_countdown() {
+  Serial.println("Pausing...");
   countdown_state = COUNTDOWN_PAUSE;
   vTaskSuspend(countdown_task_handle);
 }
 
 void resume_countdown() {
+  Serial.println("Resume...");
   countdown_state = COUNTDOWN_RESUME;
   vTaskResume(countdown_task_handle);
 }
 
 void stop_countdown() {
-  lvgl_port_lock(-1);
-  percentH2FromKnob = 0.0;
+  // percentH2FromKnob = 0.0;
+  Serial.println("Stoping...");
   savedDataToSend = true;
-  lvgl_port_unlock();
+  lvgl_port_lock(-1);
   reset_ui();
+  lvgl_port_unlock();
   save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
 
   stop_countdown_flag = true;  // Bật flag dừng
   if (countdown_task_handle != NULL) {
     countdown_state = COUNTDOWN_STOP;
-    vTaskDelete(countdown_task_handle);
+    vTaskDelete(NULL);
     countdown_task_handle = NULL;
   }
 }
@@ -585,6 +605,7 @@ void setup() {
   Button *btn = new Button(GPIO_BUTTON_PIN, false);
   btn->attachSingleClickEventCb(&SingleClickCb, NULL);
   btn->attachLongPressHoldEventCb(&LongPressHoldCb, NULL);
+  btn->attachLongPressUpEventCb(&LongPressUpCb, NULL);
   // btn->attachDoubleClickEventCb(&DoubleClickCb, NULL);
   // btn->attachLongPressStartEventCb(&LongPressStartCb, NULL);
 #endif
@@ -610,7 +631,7 @@ void setup() {
   // xKnobIDLESemaphore = xSemaphoreCreateBinary();
 
   // Tạo task OTA
-  xTaskCreate(OTA_Task, "OTA_Task", 10000, NULL, 12, NULL);
+  xTaskCreate(OTA_Task, "OTA_Task", 10000, NULL, 10, NULL);
   xTaskCreate(Send_task, "Send_task", 4096, NULL, 5, NULL);
   
   lvgl_port_unlock();
@@ -623,7 +644,7 @@ void loop() {
 void handleReceivedData(const String &data) {
   lvgl_port_lock(-1);
 
-  if (data.indexOf("v") != -1) {
+  if (data.startsWith("v")) {
     int index = data.indexOf("v");           // Tìm vị trí của 'v'
     String version = data.substring(index);  // Cắt chuỗi từ 'v' trở đi
     version.trim();                          // Loại bỏ ký tự xuống dòng, khoảng trắng
@@ -636,6 +657,151 @@ void handleReceivedData(const String &data) {
     Serial.print("Extracted version: ");
     Serial.println(versionBoard);
     save_version_to_nvs(versionBoard, versionKnob);
+    lvgl_port_unlock();
+    return;
+  }
+
+  if (data.startsWith("{")) {
+    // stop_countdown_flag = true;
+    
+    parseKnobData(data);
+    update_data_to_ui(state, timerFromKnob, percentH2FromKnob, airFlowRate);
+    Serial.println("Last_setting_timer: " + String(last_setting_timer));
+    Serial.println("Have set new data to UI");
+    if (have_new_timer) {
+      if (countdown_task_handle != NULL) {
+        vTaskDelete(countdown_task_handle);
+        countdown_task_handle = NULL;
+      }
+      countdown_state = COUNTDOWN_STOP;
+      delete_animation(arc1);
+      delete_animation(arc2);
+      have_new_timer = false;
+    }
+
+    if (state == 1) {
+      parsePercentage(); // Chuyển đổi phần trăm H2
+      have_set_timer = (strcmp(timerFromKnob, "00:00:00") != 0);
+      have_set_h2_percent = (strcmp(percentH2_str, "0.0%") != 0);
+      if (countdown_state == COUNTDOWN_PAUSE && strcmp(timerFromKnob, "00:00:00") != 0) {
+        resume_countdown();
+        knob_selection_state = RESUME;
+        lv_label_set_text(state_icon, ICON_RESUME);
+        set_font(state_icon, FONT_SIZE_STATE_SELECTED);
+        set_color(state_icon, COLOR_BLUE);
+        start_animation(anim_1, arc1);
+        start_animation(anim_2, arc2);
+        savedDataToSend = true;
+      } else if (!have_set_timer)
+      {
+        // Yêu cầu người dùng đặt thời gian
+        knob_state = SELECTION_TIME;
+        lv_label_set_text(state_icon, ICON_STOP);
+        set_font(state_icon, FONT_SIZE_STATE_NORMAL);
+        set_color(state_icon, COLOR_WHITE);
+
+        set_color(label_time, COLOR_BLUE);
+        set_font(label_time, FONT_SIZE_TIME_SELECTED);
+        lv_label_set_text(label_notice, "Please set timer");
+        return;
+      }
+      else if (!have_set_h2_percent)
+      {
+        // Yêu cầu người dùng đặt % H2
+        knob_state = SELECTION_H2;
+        lv_label_set_text(state_icon, ICON_STOP);
+        set_font(state_icon, FONT_SIZE_STATE_NORMAL);
+        set_color(state_icon, COLOR_WHITE);
+
+        set_color(label_percent, COLOR_BLUE);
+        set_font(label_percent, FONT_SIZE_PERCENT_SELECTED);
+        lv_label_set_text(label_notice, "Please set H2 percent");
+        return;
+      }
+      else
+      {
+        savedDataToSend = true;
+        knob_state = SELECTION_STATE;
+        knob_selection_state = RESUME;
+
+        lv_label_set_text(state_icon, ICON_RESUME);
+        set_font(state_icon, FONT_SIZE_STATE_SELECTED);
+        set_color(state_icon, COLOR_BLUE);
+
+        // Cập nhật giao diện
+        set_font(label_time, FONT_SIZE_TIME_NORMAL);
+        set_color(label_time, COLOR_WHITE);
+        set_font(label_percent, FONT_SIZE_PERCENT_NORMAL);
+        set_color(label_percent, COLOR_WHITE);
+
+        if ((have_set_timer) && countdown_state == COUNTDOWN_STOP) // Chỉ xử lý nếu đã đặt thời gian
+        {
+          save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
+          start_countdown();
+          start_animation(anim_1, arc1);
+          start_animation(anim_2, arc2);
+          lvgl_port_unlock();
+          return;
+        }
+        resume_countdown();
+        start_animation(anim_1, arc1);
+        start_animation(anim_2, arc2);
+        // Nếu có timer hợp lệ và đếm ngược đang dừng hoặc có timer mới, bắt đầu lại
+        // if (have_set_timer && (countdown_state == COUNTDOWN_STOP || have_new_timer)) {
+        //   save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
+        //   start_countdown();
+        //   start_animation(anim_1, arc1);
+        //   start_animation(anim_2, arc2);
+        // } else if (countdown_state == COUNTDOWN_PAUSE && have_set_timer) {
+        //   // Nếu có timer mới, task đã được xóa ở trên, nên gọi start_countdown
+        //   if (have_new_timer) {
+        //     save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
+        //     start_countdown();
+        //     start_animation(anim_1, arc1);
+        //     start_animation(anim_2, arc2);
+        //   } else {
+        //     // Tiếp tục task hiện tại nếu không có timer mới
+        //     resume_countdown();
+        //     start_animation(anim_1, arc1);
+        //     start_animation(anim_2, arc2);
+        //   }
+        // }
+      }
+    }
+    else if (state == 0) {
+      if (strcmp(timerFromKnob, "00:00:00") != 0 && countdown_state != COUNTDOWN_STOP) {
+        pause_countdown(); // Tạm dừng đếm ngược nếu timer chưa về 00:00:00
+        delete_animation(arc1);
+        delete_animation(arc2);
+        knob_selection_state = PAUSE;
+        lv_label_set_text(state_icon, ICON_STOP);
+        set_font(state_icon, FONT_SIZE_STATE_NORMAL);
+        set_color(state_icon, COLOR_WHITE);
+      }
+
+      if (total_seconds != 0) {
+        Serial.println("Timer before: " + String(timerFromKnob));
+        sprintf(timerFromKnob, "%02d:%02d:%02d", (total_seconds / 3600), ((total_seconds % 3600) / 60), (total_seconds % 60));
+        Serial.println("Timer after: " + String(timerFromKnob));
+      }
+      savedDataToSend = true;
+      // if (have_set_timer && countdown_state != COUNTDOWN_STOP && !have_new_timer) {
+      //   pause_countdown(); // Tạm dừng đếm ngược nếu timer chưa về 00:00:00 và không có timer mới
+      //   delete_animation(arc1);
+      //   delete_animation(arc2);
+      //   knob_selection_state = PAUSE;
+      //   lv_label_set_text(state_icon, ICON_STOP);
+      //   set_font(state_icon, FONT_SIZE_STATE_SELECTED);
+      //   set_color(state_icon, COLOR_WHITE);
+      // } else if (have_new_timer) {
+      //   // Nếu có timer mới, chỉ cập nhật giao diện và chờ state = 1 để bắt đầu
+      //   knob_selection_state = PAUSE;
+      //   lv_label_set_text(state_icon, ICON_STOP);
+      //   set_font(state_icon, FONT_SIZE_STATE_SELECTED);
+      //   set_color(state_icon, COLOR_WHITE);
+      // }
+      // savedDataToSend = true;
+    }
     lvgl_port_unlock();
     return;
   }
@@ -669,9 +835,9 @@ void handleReceivedData(const String &data) {
 
       strcpy(timerFromKnob, "00:00:00");
       lv_label_set_text(label_time, timerFromKnob);
-      // percentH2FromKnob = 0.0;
+      percentH2FromKnob = 0.0;
       // savedDataToSend = true;
-      exchange_H2Percent();
+      exchange_H2Percent(percentH2FromKnob);
       lv_label_set_text(label_percent, percentH2_str);
     }
   } 
@@ -679,7 +845,8 @@ void handleReceivedData(const String &data) {
     if (!isErrorScreenActive) {  // Nếu chưa ở màn hình lỗi thì mới chuyển
       isErrorScreenActive = true;
       switch_ui(ui_display_error, label_error_message);
-      stop_countdown();
+      // stop_countdown();
+      stop_countdown_flag = true;
       knob_state = ERROR;
       error_flag = true;
     }
@@ -704,28 +871,43 @@ void Send_task(void *param) {
 
 void Send_data_to_board(void) {
   char buffer[64];
+  state = (knob_selection_state == PAUSE) ? 0 : 1;
 
-  if (percentH2FromKnob != -1) {
-    
-    snprintf(buffer, sizeof(buffer), "H2_Percent:%.2f", percentH2FromKnob * 100.0);
+  if (percentH2FromKnob != -1 && timerFromKnob != NULL && airFlowRate != -1) {
+    snprintf(buffer, 64, "Data From Knob:%d|%s|%.2f|%.0f", state, timerFromKnob, percentH2FromKnob, airFlowRate);
     OtaSerial.println(buffer);
-    Serial.println("Send h2 percent");
-  }
-
-  if (timerFromKnob != NULL) {
-    
-    snprintf(buffer, sizeof(buffer), "Timer:%s", timerFromKnob);
-    OtaSerial.println(buffer);
-    Serial.println("Send timer");
+    Serial.println(buffer);
   }
 }
 
 bool containsSpecialChar(const String &str) {
   for (size_t i = 0; i < str.length(); i++) {
     char c = str[i];
-    if (!isalnum(c) && c != ' ' && c != '_') {
+    if (!isalnum(c) && c != ' ' && c != '_' && c != '{' && c != '}') {
       return true;  // Có ký tự đặc biệt
     }
   }
   return false;  // Không có ký tự đặc biệt
+}
+
+void parseKnobData(const String& jsonString) {
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, jsonString);
+
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  state = doc["state"] | 0;  // mặc định 0 nếu không có
+  strlcpy(timerFromKnob, doc["timer"] | "", sizeof(timerFromKnob));
+  percentH2FromKnob = doc["percent"] | percentH2FromKnob;
+  airFlowRate = doc["typeMachine"] | airFlowRate;
+
+  Serial.println("================== KNOB DATA ==================");
+  Serial.println("KNOB state: " + String(state));
+  Serial.println("KNOB timer: " + String(timerFromKnob));
+  Serial.println("KNOB percent: " + String(percentH2FromKnob));
+  Serial.println("KNOB type_machine: " + String(airFlowRate));
 }
