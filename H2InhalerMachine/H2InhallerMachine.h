@@ -3,10 +3,10 @@
 #ifndef _H2_INHALLER_MACHINE_H
 #define _H2_INHALLER_MACHINE_H
 
-#define VERSION "v1.8.0"
+#define VERSION "v3.9.0"
 
-#define UART2_RX_PIN GPIO_NUM_1
-#define UART2_TX_PIN GPIO_NUM_2
+#define UART2_RX_PIN GPIO_NUM_44
+#define UART2_TX_PIN GPIO_NUM_43
 
 #define WATER_PUMP_PIN GPIO_NUM_4
 #define AIR_PUMP_PIN GPIO_NUM_5
@@ -25,7 +25,7 @@
 
 // #define DEBUG
 
-// #define NO_SENSOR
+#define NO_SENSOR
 
 
 

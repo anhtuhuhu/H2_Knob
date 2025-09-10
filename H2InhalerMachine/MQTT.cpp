@@ -1,4 +1,3 @@
-#include "WiFiType.h"
 #include "WiFi.h"
 #include "freertos/projdefs.h"
 #include "MQTT.h"

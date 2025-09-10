@@ -1,3 +1,4 @@
+#include "BLECharacteristic.h"
 #include "BLE_Class.h"
 
 
@@ -15,6 +16,7 @@ BLEHandler::BLEHandler() {
   pSSIDRequestChar = nullptr;
   pSSIDResponseChar = nullptr;
   pWIFIStatusChar = nullptr;
+  pApp = nullptr;
   is_ble_start = false;
   instance = this;
 }
@@ -59,6 +61,12 @@ void BLEHandler::begin() {
       BLECharacteristic::PROPERTY_READ|BLECharacteristic::PROPERTY_NOTIFY
     );
     pSSIDResponseChar->addDescriptor(new BLE2902());
+
+    pApp = pService->createCharacteristic(
+      WRITE_CHAR_UUID,
+      BLECharacteristic::PROPERTY_WRITE
+    );
+    pApp->setCallbacks(new BLECallbacks());
 
     BLEDevice::setMTU(MAX_MTU_SIZE); // đề nghị MTU cao hơn mặc định
     connectID = pServer->getConnId();
@@ -106,10 +114,10 @@ void BLEHandler::sendSSID(char* ssid_list) {
 
 // Callback xử lý yêu cầu từ app
 void BLEHandler::BLECallbacks::onWrite(BLECharacteristic* pChar) {
-  String val = pChar->getValue();
+  String val = pChar->getValue() + "\n";
   Serial.println("[BLE] App requested: " + String(val.c_str()) + " len: " + String(pChar->getLength()));
 
-  for (size_t i = 0; i < pChar->getLength(); i++) {
+  for (size_t i = 0; i < pChar->getLength() + 1; i++) {
     char c = val[i];
 
     if (rxOffSet < MAX_LEN_RX_BUFFER - 1) {

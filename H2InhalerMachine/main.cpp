@@ -140,8 +140,8 @@ void Setup() {
 
     //=========================================MQTT=========================================
     _mqtt.MQTT_init(H2_MQTT_BROKER, H2_MQTT_PORT, H2_MQTT_USERNAME, H2_MQTT_PASSWORD);
-    mqtt_publish_message(PARAMETER_REQUEST, MAC_id.c_str(), "{}");
     mqtt_subscribe(PARAMETER_CURRENT, MAC_id.c_str());
+    mqtt_publish_message(PARAMETER_REQUEST, MAC_id.c_str(), "{}");
   }
 
   _mqtt.setMessageHandler(handleMQTTReceivedMessage);

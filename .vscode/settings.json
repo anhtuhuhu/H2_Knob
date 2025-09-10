@@ -1,3 +1,4 @@
 {
-    "C_Cpp.errorSquiggles": "disabled"
+    "C_Cpp.errorSquiggles": "disabled",
+    "cmake.sourceDirectory": "C:/Users/ADMIN/OneDrive/Documents/Arduino/H2_Knob/ui/src"
 }

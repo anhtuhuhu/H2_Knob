@@ -8,6 +8,8 @@
 #include <BLE2902.h>
 
 #define H2_INHALER_UUID(val) ("e4f09000-" val "-4625-988c-bc09a4963c44")
+#define WRITE_CHAR_UUID "7a442881-509c-47fa-ac02-b06a37d9eb76"
+// const char write_char = "7a442881-509c-47fa-ac02-b06a37d9eb76";
 
 #define MAX_MTU_SIZE 23
 #define MAX_MAC_ID_LEN 18
@@ -31,6 +33,8 @@ public:
   BLECharacteristic* pSSIDRequestChar;
   BLECharacteristic* pSSIDResponseChar;
   BLECharacteristic* pWIFIStatusChar;
+
+  BLECharacteristic* pApp;
 private:
   BLEServer* pServer;
   BLEService* pService;

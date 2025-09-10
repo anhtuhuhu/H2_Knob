@@ -112,24 +112,41 @@ void WIFI::scanAndSendAPs(char* ap_list) {
   free(wifi_ap_list);
 }
 
+// bool WIFI::parseWiFiCommand(const char* input, char* ssid, char* pass) {
+//   const char* prefix = "WIFI:";
+//   if (strncmp(input, prefix, strlen(prefix)) != 0) return false;
+
+//   const char* ssidStart = input + strlen(prefix);
+//   const char* colon = strchr(ssidStart, ':');
+//   if (!colon) return false;
+
+//   size_t ssidLen = colon - ssidStart;
+//   size_t passLen = strlen(colon + 1);
+
+//   if (ssidLen >= MAX_WIFI_SSID_LEN || passLen >= MAX_WIFI_PASS_LEN) return false;
+
+//   strncpy(ssid, ssidStart, ssidLen); ssid[ssidLen] = '\0';
+//   strncpy(pass, colon + 1, passLen); pass[passLen] = '\0';
+
+//   Serial.printf("parse_wifi_info:  ssid: %s  -  pass: %s", ssid, pass);
+
+//   return true;
+// }
+
 bool WIFI::parseWiFiCommand(const char* input, char* ssid, char* pass) {
-  const char* prefix = "WIFI:";
-  if (strncmp(input, prefix, strlen(prefix)) != 0) return false;
+  const char* semicolon = strchr(input, ';');
+  if (!semicolon) return false;
 
-  const char* ssidStart = input + strlen(prefix);
-  const char* colon = strchr(ssidStart, ':');
-  if (!colon) return false;
-
-  size_t ssidLen = colon - ssidStart;
-  size_t passLen = strlen(colon + 1);
-
+  size_t ssidLen = semicolon - input;
+  size_t passLen = strlen(semicolon + 1);
   if (ssidLen >= MAX_WIFI_SSID_LEN || passLen >= MAX_WIFI_PASS_LEN) return false;
 
-  strncpy(ssid, ssidStart, ssidLen); ssid[ssidLen] = '\0';
-  strncpy(pass, colon + 1, passLen); pass[passLen] = '\0';
+  strncpy(ssid, input, ssidLen);
+  ssid[ssidLen] = '\0';
+  strncpy(pass, semicolon + 1, passLen);
+  pass[passLen] = '\0';
 
   Serial.printf("parse_wifi_info:  ssid: %s  -  pass: %s", ssid, pass);
-
   return true;
 }
 
