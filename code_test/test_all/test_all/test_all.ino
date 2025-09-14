@@ -38,7 +38,12 @@
 #define TPL0401B_ADDR 0x3E  // Địa chỉ I2C của TPL0401B
 #define CMD_WIPER 0x00      // Thanh ghi Wiper Register
 
+#define VREF 5.0
+#define MAX_STEPS 128
+
 #define DEBOUNCE_TIME_MS 10
+
+HardwareSerial UART2(1);
 
 #define TEST_TMP36
 #define TEST_PUMP
@@ -48,6 +53,8 @@
 #define TEST_TDS
 #define TEST_LIMIT_SW
 #define TEST_FLOAT_SENSOR
+#define TEST_H2_SENSOR
+#define TEST_KNOB
 
 ADS1115 ADS(0x48);
 // ADS channels enumeration
@@ -169,11 +176,18 @@ void test_current_control(void) {
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     Serial.println("Receive command: " + cmd);
-    int recv_value = cmd.toInt();
-    if (recv_value >= 0 && recv_value < 128) {
-      setWiper(recv_value);
-      Serial.print("Wiper set to: ");
-      Serial.println(recv_value);
+    float recv_value = cmd.toFloat();
+    recv_value = round(recv_value * 10) / 10.0;
+    if (recv_value >= 0.0 && recv_value <= 4.0) {
+      float voltage = 1.0933 * recv_value + 0.4321;
+      int step = voltageToStep(voltage, VREF, MAX_STEPS);
+      if (step >= 0 && step < 128) {
+        setWiper(step);
+        Serial.print("Wiper set to: ");
+        Serial.println(step);
+      }
+    } else {
+      Serial.println("Only enter value from 0.0 to 4.0 with step 0.1");
     }
   }
 }
@@ -196,6 +210,33 @@ void test_TDS(void) {
   } else {
     Serial.println("TDS value is normal");
   }
+}
+
+void test_H2(void) {
+  ADS.readADC(H2_SENSOR_1_ADS_CHANNEL);
+  _ads_data.h2_data_1 = ADS.getValue();
+  Serial.println("H2 sensor 1 value: " + String(_ads_data.h2_data_1));
+
+  ADS.readADC(H2_SENSOR_2_ADS_CHANNEL);
+  _ads_data.h2_data_2 = ADS.getValue();
+  Serial.println("H2 sensor 2 value: " + String(_ads_data.h2_data_2));
+}
+
+/*
+  Equation y=1.0933x + 0.4321
+  y: voltage
+  x: %H2
+*/
+
+int voltageToStep(float Vout, float Vref, int maxSteps) {
+  if (Vout < 0)
+    Vout = 0;
+  if (Vout > Vref)
+    Vout = Vref;
+
+  float ratio = Vout / Vref;  // phần trăm
+  int step = round(ratio * maxSteps);
+  return step;
 }
 
 void IRAM_ATTR limitsw_handleInterrupt() {
@@ -230,26 +271,52 @@ void IRAM_ATTR level_float_2_handleInterrupt() {
 
 void setup() {
   Serial.begin(115200);
+#ifdef TEST_TMP36
   pinMode(TMP36_PIN, INPUT);
   pinMode(TEMP_HUMI_PIN, INPUT);
+#endif
+
+#ifdef TEST_PUMP
   pinMode(AIR_PUMP_PIN, OUTPUT);
   pinMode(WATER_PUMP_PIN, OUTPUT);
+#endif
+
+#ifdef TEST_FAN
   pinMode(ENABLE_FAN_PIN, INPUT);
+#endif
+
+#ifdef TEST_FLOW_SENSOR
   analogReadResolution(12);  // ADC Resolution = 12 bit (0-4095)
+#endif
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);  // Khởi tạo I2C
+
+#ifdef TEST_CURRENT_CONTROL
   pinMode(ENB_POWER_PIN, INPUT);
   digitalWrite(ENB_POWER_PIN, HIGH);
+#endif
 
+#ifdef TEST_TDS || TEST_H2_SENSOR
   ads_setting();
+#endif
 
+#ifdef TEST_LIMIT_SW
   pinMode(LIMIT_SW_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(LIMIT_SW_PIN), limitsw_handleInterrupt, CHANGE);
+#endif
+
+#ifdef TEST_FLOAT_SENSOR
   pinMode(LEVEL_FLOAT1_PIN, INPUT);
   pinMode(LEVEL_FLOAT2_PIN, INPUT);
 
-  attachInterrupt(digitalPinToInterrupt(LIMIT_SW_PIN), limitsw_handleInterrupt, CHANGE);
   attachInterrupt(digitalPinToInterrupt(LEVEL_FLOAT1_PIN), level_float_1_handleInterrupt, RISING);
   attachInterrupt(digitalPinToInterrupt(LEVEL_FLOAT2_PIN), level_float_2_handleInterrupt, RISING);
+#endif
+
+#ifdef TEST_KNOB
+  UART2.begin(460800, SERIAL_8N1, GPIO_NUM_1, GPIO_NUM_2);
+#endif
+
 }
 
 void loop() {
@@ -277,6 +344,10 @@ void loop() {
   test_TDS();
 #endif
 
+#ifdef TEST_H2_SENSOR
+  test_H2();
+#endif
+
 #ifdef TEST_LIMIT_SW
   if (limitsw_interruptFlag || digitalRead(LIMIT_SW_PIN) == LOW) {
     if (!digitalRead(LIMIT_SW_PIN)) {
@@ -299,6 +370,12 @@ void loop() {
   }
 #endif
 
+#ifdef TEST_KNOB
+  if (UART2.available()) {
+    String recv = UART2.readStringUntil('\n');
+    Serial.println(recv);
+  }
+#endif
 
   delay(100);
 }

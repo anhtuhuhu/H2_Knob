@@ -36,11 +36,11 @@ void test_TDS(void) {
   _ads_data.tds_data = ADS.getValue();
   Serial.println("TDS value: " + String(_ads_data.tds_data));
 
-  if (_ads_data.tds_data > 5) {
-    Serial.println("TDS sensor triggered: High TDS level detected.");
-  } else {
-    Serial.println("TDS value is normal");
-  }
+  // if (_ads_data.tds_data > 5) {
+  //   Serial.println("TDS sensor triggered: High TDS level detected.");
+  // } else {
+  //   Serial.println("TDS value is normal");
+  // }
 }
 
 void setup() {
@@ -51,5 +51,5 @@ void setup() {
 
 void loop() {
   test_TDS();
-  delay(1000);
+  delay(500);
 }

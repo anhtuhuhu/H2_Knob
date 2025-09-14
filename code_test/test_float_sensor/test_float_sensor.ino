@@ -46,5 +46,5 @@ void loop() {
   } else {
     Serial.println("Water level is low (< 25%)");
   }
-  delay(1000);
+  delay(500);
 }

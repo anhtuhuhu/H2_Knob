@@ -34,5 +34,5 @@ void loop() {
       limitsw_interruptFlag = false;
     }
   }
-  delay(1000);
+  delay(10);
 }
