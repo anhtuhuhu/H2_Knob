@@ -1,15 +1,16 @@
-// #include <stdio.h>
-// #include "freertos/portmacro.h"
+#include "projdefs.h"
 #include "main.h"
+#include "esp_system.h"
 // ============================================================CLASS OBJECT============================================================
-OTA _ota;                                     // OTA object
-WIFI _wifi;                                   // WIFI object
-MQTT _mqtt;                                   // MQTT object
+// OTA _ota;   // Old OTA object (HTTP)
+// OTA_MQTT _ota; // New OTA object (MQTT)
+WIFI _wifi;  // WIFI object
+// MQTT _mqtt;    // MQTT object
 // ====================================================================================================================================
 
 // =============================================================GLOBAL VAR=============================================================
-// WebServer instance
-WebServer server(80);
+// WebServer instance - commented out as we use MQTT for OTA now
+// WebServer server(80);
 // UART for Knob communication
 HardwareSerial UART2(1);
 
@@ -19,27 +20,24 @@ Knob_data_t _knob2Board;
 Error_status_t _errorStatus;
 String MAC_id;
 
-typedef void (*WiFiReconnectFunc) ();
+typedef void (*WiFiReconnectFunc)();
 
 ads_data_t _ads_data;
 
 // Interrupt flags
-volatile bool limitsw_interruptFlag = false;
-volatile bool levelfloat_interruptFlag = false;
-volatile bool waterleak_interruptFlag = false;
+volatile bool limitsw_state = false;
+volatile bool float1_state = false;
+volatile bool float2_state = false;
 
-const int pwmPin = 16;        // PWM pin
-const int pwmFreq = 4000;     // PWM frequency
-const int pwmResolution = 13; // 13 bit
-const int pwmChannel = 1;     // PWM channel
+const int pwmPin = 16;         // PWM pin
+const int pwmFreq = 4000;      // PWM frequency
+const int pwmResolution = 13;  // 13 bit
+const int pwmChannel = 1;      // PWM channel
 
-const char* H2_MQTT_BROKER = "broker.emqx.io";
-const int H2_MQTT_PORT     = 8883;
-const char* H2_MQTT_USERNAME = "inhaler-h2";
-const char* H2_MQTT_PASSWORD = "inhaler-h2";
-
-float _Volfor100PercentH2 = 0;
-float _Volfor1000ppmTDS = 0;  // max sensor is 1000ppm
+const char *H2_MQTT_BROKER = "broker.emqx.io";
+const int H2_MQTT_PORT = 8883;
+const char *H2_MQTT_USERNAME = "inhaler-h2";
+const char *H2_MQTT_PASSWORD = "inhaler-h2";
 
 uint32_t lastReadTimeSensor = 0;
 volatile unsigned long lastDebounceTime = 0;
@@ -47,6 +45,7 @@ String h2_percent;
 String tds_data;
 bool h2;
 bool tds;
+uint8_t temp_return_val;
 bool haveMessageViaMQTT;
 bool clearErrorFlag = false;
 // Note : If H2 = 0 meaning Pause/Timeout wait until Resume/Start
@@ -56,14 +55,8 @@ String timer;
 float airFlowRate;
 bool _run = false;
 
-const mqtt_topic_info_t mqtt_topics[TOPIC_COUNT] = {
-  [PARAMETER_UPDATE] = {"parameter", "update", 1},
-  [PARAMETER_CURRENT] = {"parameter", "current", 0},
-  [PARAMETER_REQUEST] = {"parameter", "request", 1},
+// 0: cloud->device, 1: device->cloud
 
-  [ERROR_UPDATE] = {"error", "update", 1},
-  [ERROR_CLEAR] = {"error", "clear", 0},
-};
 
 TaskHandle_t pumpControlTaskHandle = NULL;
 TaskHandle_t sendMQTTDataToKnobTaskHandle = NULL;
@@ -74,34 +67,45 @@ TaskHandle_t sendMQTTDataToKnobTaskHandle = NULL;
 void Setup() {
   Serial.begin(115200);
   UART2.begin(460800, SERIAL_8N1, UART2_RX_PIN, UART2_TX_PIN);
+  Serial.print("VERSION: ");
+  Serial.println(VERSION);
 
-  delay(200);  
+  delay(200);
   //=====================================LEDC====================================
   ledcAttach(pwmPin, pwmFreq, pwmResolution);
   updatePWMVoltage(0);
   //=================================DEFINE PINS=================================
   pinMode(WATER_PUMP_PIN, OUTPUT);
   pinMode(AIR_PUMP_PIN, OUTPUT);
+  pinMode(ENABLE_FAN_PIN, OUTPUT);
 
-  pinMode(LIMIT_SW_PIN, INPUT);
-  pinMode(WATER_LEAK_PIN, INPUT_PULLDOWN);
-  pinMode(LEVEL_FLOAT_PIN, INPUT);
+  pinMode(LIMIT_SW_PIN, INPUT_PULLUP);
+  pinMode(LEVEL_FLOAT1_PIN, INPUT_PULLUP);
+  pinMode(LEVEL_FLOAT2_PIN, INPUT_PULLUP);
+
+  limitsw_state = digitalRead(LIMIT_SW_PIN);
+  float1_state = digitalRead(LEVEL_FLOAT1_PIN);
+  float2_state = digitalRead(LEVEL_FLOAT2_PIN);
+
+  pinMode(TMP36_SHUTDOWN_PIN, OUTPUT);
+  pinMode(TEMP_HUMI_PIN, INPUT);
+  pinMode(ENB_POWER_PIN, OUTPUT);
+
 
   digitalWrite(WATER_PUMP_PIN, 0);
   digitalWrite(AIR_PUMP_PIN, 0);
+
+  digitalWrite(TMP36_SHUTDOWN_PIN, HIGH);
+  digitalWrite(ENB_POWER_PIN, HIGH);
   //=================================INTERRUPT=================================
   attachInterrupt(digitalPinToInterrupt(LIMIT_SW_PIN), limitsw_handleInterrupt, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(LEVEL_FLOAT_PIN), levelfloat_handleInterrupt, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(WATER_LEAK_PIN), waterleak_handleInterrupt, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(LEVEL_FLOAT1_PIN), level_float_1_ISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(LEVEL_FLOAT2_PIN), level_float_2_ISR, CHANGE);
   //=================================I2C INIT==================================
-  Wire.begin(I2C_SCL_PIN, I2C_SDA_PIN);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   //=================================ADS INIT==================================
   ads_setting();
-  _Volfor100PercentH2 = ADS.getMaxVoltage();  // Need to change if max voltage is not 100% H2
-  _Volfor1000ppmTDS = ADS.getMaxVoltage();    // Need to change if max voltage is not 1000ppm TDS
   //====================================WI-FI====================================
-  // _wifi.wifi_scan_handle();
-  // _wifi.ConnectWifi();
   _wifi.init();
   MAC_id = _wifi.getMacAddress();
   Serial.println("MAC ID: " + MAC_id);
@@ -110,8 +114,7 @@ void Setup() {
     if (mqtt_topics[i].direction == 1) {
       Serial.print("Topic for publish: ");
       mqtt_publish_message(i, MAC_id.c_str(), "");
-    }
-    else {
+    } else {
       Serial.print("Topic for subscribe: ");
       mqtt_subscribe(i, MAC_id.c_str());
     }
@@ -121,11 +124,6 @@ void Setup() {
   _wifi.setConnectedCallback(reconnect_handler);
 
   if (WiFi.status() == WL_CONNECTED) {
-    server.on("/", std::bind(&OTA::handleRoot, &_ota)); // need to use std::bind(&Class::method, &object) for calling a method of a class in 
-    server.on("/update", HTTP_POST, std::bind(&OTA::handleUpdate, &_ota), std::bind(&OTA::handleUpload, &_ota));
-    server.begin();
-    Serial.println("HTTP server started");
-
     //=================================Send VERSION & IP to KNOB=================================
     UART2.print("\n");
     delay(1000);
@@ -146,30 +144,38 @@ void Setup() {
 
   _mqtt.setMessageHandler(handleMQTTReceivedMessage);
 
-  // _wifi.wifiSetup();
   //====================================Tasks Creation====================================
-  xTaskCreate(Serial_Handle_task, "Serial_Handle_task", 4096, NULL, 6, NULL);
-  xTaskCreate(warning_Handle_Task, "warning_Handle_Task", 4096, NULL, 6, NULL);
-  xTaskCreate(PumpControlTask, "PumpControlTask", 4096, NULL, 6, &pumpControlTaskHandle);
-  xTaskCreate(SendMQTTDataToKnobTask, "SendMQTTDataToKnobTask", 4096, NULL, 6, &sendMQTTDataToKnobTaskHandle);
-  
+  xTaskCreatePinnedToCore(Serial_Handle_task, "Serial_Handle_task", 4096, NULL, 6, NULL, 0);
+  xTaskCreatePinnedToCore(warning_Handle_Task, "warning_Handle_Task", 4096, NULL, 6, NULL, 0);
+  xTaskCreatePinnedToCore(PumpControlTask, "PumpControlTask", 4096, NULL, 6, &pumpControlTaskHandle, 0);
+  xTaskCreatePinnedToCore(SendMQTTDataToKnobTask, "SendMQTTDataToKnobTask", 4096, NULL, 6, &sendMQTTDataToKnobTaskHandle, 0);
+  Serial.print("Free heap: ");
+  Serial.println(esp_get_free_heap_size());
 }
 
 // ===============================================================MAIN================================================================
 void Main() {
   vTaskDelay(1);
-  server.handleClient();
+
+  // Comment out HTTP server handling as we use MQTT for OTA now
+  // server.handleClient();
+
   // Handle OTA state for Knob via UART responses
-  if (_ota.otaState == _ota.OTA_WAIT_READY || _ota.otaState == _ota.OTA_SENDING || _ota.otaState == _ota.OTA_END) {
+  // if (_ota.otaState == _ota.OTA_WAIT_READY || _ota.otaState == _ota.OTA_SENDING || _ota.otaState == _ota.OTA_END)
+  if (_ota.getStatus().state == OTA_MQTT::OTA_WAIT_READY || _ota.getStatus().state == OTA_MQTT::OTA_SENDING || _ota.getStatus().state == OTA_MQTT::OTA_END) {
     if (UART2.available()) {
       String response = UART2.readStringUntil('\n');
       response.trim();
-      if (response == "READY" && _ota.otaState == _ota.OTA_WAIT_READY) {
-        _ota.otaState = _ota.OTA_SENDING;
+      // if (response == "READY" && _ota.otaState == _ota.OTA_WAIT_READY)
+      if (response == "READY" && _ota.getStatus().state == OTA_MQTT::OTA_WAIT_READY) {
+        // _ota.otaState = _ota.OTA_SENDING;
+        _ota.getStatus().state = OTA_MQTT::OTA_SENDING;
         Serial.println("Knob is ready for OTA");
-      } 
-      else if (response == "OTA_SUCCESS" && _ota.otaState == _ota.OTA_END) {
-        _ota.otaState = _ota.OTA_IDLE;
+      }
+      // else if (response == "OTA_SUCCESS" && _ota.otaState == _ota.OTA_END)
+      else if (response == "OTA_SUCCESS" && _ota.getStatus().state == OTA_MQTT::OTA_END) {
+        // _ota.otaState = _ota.OTA_IDLE;
+        _ota.getStatus().state = OTA_MQTT::OTA_IDLE;
         Serial.println("Knob OTA successful!");
         delay(4000);
         Serial.println("Send version and IP");
@@ -179,10 +185,10 @@ void Main() {
         snprintf(ip_address, sizeof(ip_address), "%d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
         UART2.println("IP:" + String(ip_address));
         delay(1000);
-      } 
-      else if (response.startsWith("ERR")) {
+      } else if (response.startsWith("ERR")) {
         Serial.println("Knob OTA failed: " + response);
-        _ota.otaState = _ota.OTA_IDLE;
+        // _ota.otaState = _ota.OTA_IDLE;
+        _ota.getStatus().state = OTA_MQTT::OTA_IDLE;
       }
     }
   }
@@ -191,28 +197,29 @@ void Main() {
 // =============================================================INTERRUPT=============================================================
 void IRAM_ATTR limitsw_handleInterrupt() {
   static uint32_t last_isr_time = 0;
-  uint32_t current_time = esp_timer_get_time() / 1000;
+  uint32_t current_time = millis();
 
   if ((current_time - last_isr_time) > DEBOUNCE_TIME_MS) {
-    limitsw_interruptFlag = true;
+    limitsw_state = digitalRead(LIMIT_SW_PIN);
     last_isr_time = current_time;
   }
 }
 
-void IRAM_ATTR levelfloat_handleInterrupt() {
+void IRAM_ATTR level_float_1_ISR() {
   static uint32_t last_isr_time = 0;
-  uint32_t current_time = esp_timer_get_time() / 1000;
-
-  if ((current_time - last_isr_time) > 1000) {
-    levelfloat_interruptFlag = true;
-    last_isr_time = current_time;
+  uint32_t now = millis();
+  if (now - last_isr_time > DEBOUNCE_TIME_MS) {
+    float1_state = digitalRead(LEVEL_FLOAT1_PIN);  // lưu trạng thái hiện tại
+    last_isr_time = now;
   }
 }
 
-void IRAM_ATTR waterleak_handleInterrupt() {
-  if ((millis() - lastDebounceTime) > 50) {
-    waterleak_interruptFlag = true;
-    lastDebounceTime = millis();
+void IRAM_ATTR level_float_2_ISR() {
+  static uint32_t last_isr_time = 0;
+  uint32_t now = millis();
+  if (now - last_isr_time > DEBOUNCE_TIME_MS) {
+    float2_state = digitalRead(LEVEL_FLOAT2_PIN);
+    last_isr_time = now;
   }
 }
 
@@ -236,11 +243,11 @@ bool readH2Sensor(int h2_val) {
   // Serial.print("H2 Value: ");
   // Serial.println(h2_val);
 
-  if(h2_val > 11000){
+  if (h2_val > 11000) {
     updatePWMVoltage(0);
     return false;
   }
-    
+
   return true;
 }
 
@@ -258,23 +265,27 @@ bool readTDS(int tds_val) {
   if (tdsValue > 5) {
     // Serial.println("TDS sensor triggered: High TDS level detected.");
     // return false;
-    
   }
 
   return true;
 }
 #else
 bool readH2Sensor(void) {
-  ADS.readADC(H2_SENSOR_ADS_CHANNEL);
-  _ads_data.h2_data = ADS.getValue();
-  Serial.print("H2 Value: ");
-  Serial.println(_ads_data.h2_data);
+  ADS.readADC(H2_SENSOR_1_ADS_CHANNEL);
+  _ads_data.h2_data_1 = ADS.getValue();
+  Serial.print("H2 sensor 1 Value: ");
+  Serial.println(_ads_data.h2_data_1);
 
-  if(_ads_data.h2_data > 11000){
+  ADS.readADC(H2_SENSOR_2_ADS_CHANNEL);
+  _ads_data.h2_data_2 = ADS.getValue();
+  Serial.print("H2 sensor 2 Value: ");
+  Serial.println(_ads_data.h2_data_2);
+
+  if (_ads_data.h2_data_1 > 11000 || _ads_data.h2_data_2 > 11000) {
     updatePWMVoltage(0);
     return false;
   }
-    
+
   return true;
 }
 
@@ -292,7 +303,6 @@ bool readTDS(void) {
   if (_ads_data.tds_data > 5) {
     Serial.println("TDS sensor triggered: High TDS level detected.");
     return false;
-    
   }
 
   return true;
@@ -316,6 +326,63 @@ void handleSerialCommands(void) {
 }
 #endif
 
+uint8_t check_temperature(void) {
+  int TMP36_RawValue = 0;
+  float Voltage_mV;
+  float Temperature_C;
+  float Temperature_F;
+
+  // Read TMP36_Sensor ADC Pin
+  TMP36_RawValue = analogRead(TMP36_SHUTDOWN_PIN);
+  Voltage_mV = ((TMP36_RawValue * 5.0) / 1023.0) * 1000;
+  // TempC = Voltage(mV) / 10
+  Temperature_C = Voltage_mV / 10;
+  Temperature_F = (Temperature_C * 1.8) + 32;
+
+  // Print The Readings
+  Serial.print("Temperature = ");
+  Serial.print(Temperature_C);
+  Serial.print(" °C , ");
+  Serial.print("Temperature = ");
+  Serial.print(Temperature_F);
+  Serial.println(" °F");
+
+  if (Temperature_C > TEMPERATURE_UPPER_THRESHOLD || Temperature_C < TEMPERATURE_LOWER_THRESHOLD) {
+    if (Temperature_C > TEMPERATURE_UPPER_THRESHOLD) {
+      Serial.println("Temperature is too high");
+      return HIGH_TEMPERATURE;
+    }
+    else {
+      Serial.println("Temperature is too low");
+      return LOW_TEMPERATURE;
+    }
+  }
+  return NORMAL_TEMPERATURE;
+}
+
+// =============================================================CURRENT CONTROL=============================================================
+int voltageToStep(float Vout, float Vref, int maxSteps) {
+  if (Vout < 0)
+    Vout = 0;
+  if (Vout > Vref)
+    Vout = Vref;
+
+  float ratio = Vout / Vref;  // phần trăm
+  int step = round(ratio * maxSteps);
+  return step;
+}
+
+void setWiper(uint8_t value) {
+  Wire.beginTransmission(TPL0401B_ADDR);
+  Wire.write(CMD_WIPER);     // Thanh ghi Wiper = 0x00
+  Wire.write(value & 0x7F);  // 7 bit (0-127)
+  Wire.endTransmission();
+}
+
+float calculateVoltage(int h2_percent) {
+  return 1.0933 * (float)(h2_percent / 100) + 0.4321;
+}
+
 // =============================================================KNOB COMMUNICATION=============================================================
 void connectedWiFi_cb(void) {
   Serial.println("\nConnected to WiFi!");
@@ -333,58 +400,67 @@ void connectedWiFi_cb(void) {
   Serial.println(ip_address);
   UART2.print("IP:" + String(ip_address) + "\n");
 
-  server.on("/", std::bind(&OTA::handleRoot, &_ota)); // need to use std::bind(&Class::method, &object) for calling a method of a class in 
-  server.on("/update", HTTP_POST, std::bind(&OTA::handleUpdate, &_ota), std::bind(&OTA::handleUpload, &_ota));
-  server.begin();
-  Serial.println("HTTP server started");
+  // server.on("/", std::bind(&OTA::handleRoot, &_ota)); // need to use std::bind(&Class::method, &object) for calling a method of a class in
+  // server.on("/update", HTTP_POST, std::bind(&OTA::handleUpdate, &_ota), std::bind(&OTA::handleUpload, &_ota));
+  // server.begin();
+  // Serial.println("HTTP server started");
 
   _mqtt.MQTT_init(H2_MQTT_BROKER, H2_MQTT_PORT, H2_MQTT_USERNAME, H2_MQTT_PASSWORD);
   mqtt_publish_message(PARAMETER_REQUEST, MAC_id.c_str(), "{}");
   mqtt_subscribe(PARAMETER_CURRENT, MAC_id.c_str());
+  mqtt_subscribe(OTA_UPDATE, MAC_id.c_str());
 }
 
 void handleKnobCommand(void) {
   // Keep reading data until a value greater than 0 is received
   do {
-    if(_ota.otaState != _ota.OTA_IDLE)
+    // if (_ota.otaState != _ota.OTA_IDLE)
+    if (_ota.getStatus().state != OTA_MQTT::OTA_IDLE) {
+      Serial.println("Is OTA");
       break;
+    }
+
     if (UART2.available()) {
-        String receivedData = UART2.readStringUntil('\n');  // Read data from UART2
-        Serial.println("Received data from Knob: ");
-        Serial.println(receivedData);
-        parseKnobData(receivedData.c_str());
-        String jsonToSend = buildKnobDataJson(_knob2Board);
-        Serial.println("JSON to send: " + jsonToSend);
-        flow = _knob2Board.percent * 100;
+      String receivedData = UART2.readStringUntil('\n');  // Read data from UART2
+      Serial.println("Received data from Knob: ");
+      Serial.println(receivedData);
+      parseKnobData(receivedData.c_str());
+      String jsonToSend = buildKnobDataJson(_knob2Board);
+      Serial.println("JSON to send: " + jsonToSend);
+      flow = _knob2Board.percent * 100;
 
-        mqtt_publish_message(PARAMETER_UPDATE, MAC_id.c_str(), jsonToSend);
+      mqtt_publish_message(PARAMETER_UPDATE, MAC_id.c_str(), jsonToSend);
 
-        _run = true;
-      }
-      int dutyValue;
-      if (flow == 0)
-      {
-        updatePWMVoltage(0);
-        // Serial.println("Flow is 0. Stopping PWM.");
-        _run = false;
-        if (h2 && tds && !levelfloat_interruptFlag && !limitsw_interruptFlag && !waterleak_interruptFlag) { // Khi hết lỗi -> knob yêu cầu pwm trở về 0 -> cần gửi lại lệnh reset
-          UART2.println("X");
-          if (!clearErrorFlag) {
-            mqtt_publish_message(ERROR_CLEAR, MAC_id.c_str(), "{}");
-            _errorStatus.hepaFilterMissing = 0;
-            _errorStatus.waterLeakDetected = 0;
-            _errorStatus.floatDetected = 0;
-            _errorStatus.poorWaterQuality = 0;
-            _errorStatus.h2LeakDetected = 0;
-            clearErrorFlag = true;
-          }
-            
+      _run = true;
+    }
+    int dutyValue;
+    if (flow == 0) {
+      updatePWMVoltage(0);
+      // Serial.println("Flow is 0. Stopping PWM.");
+      _run = false;
+      if (h2 && tds && !limitsw_state && float2_state) {  // Khi hết lỗi -> knob yêu cầu pwm trở về 0 -> cần gửi lại lệnh reset
+        UART2.println("X");
+        if (!clearErrorFlag) {
+          mqtt_publish_message(ERROR_CLEAR, MAC_id.c_str(), "{}");
+          _errorStatus.hepaFilterMissing = 0;
+          _errorStatus.waterLevelLow = 0;
+          _errorStatus.poorWaterQuality = 0;
+          _errorStatus.h2LeakDetected = 0;
+          clearErrorFlag = true;
         }
       }
-      dutyValue = map(flow, 10, 400, 550, 7976);
-      ledcWrite(pwmPin, dutyValue);
+    }
+
+    float voltage = calculateVoltage(flow);
+    int step = voltageToStep(voltage, VREF, MAX_STEPS);
+    if (step >= 0 && step < MAX_STEPS) {
+      setWiper(step);
+      Serial.print("Wiper set to: ");
+      Serial.println(step);
+    }
+
     delay(400);
-  } while (flow == 0 );  // Continue waiting if flow is 0
+  } while (flow == 0);  // Continue waiting if flow is 0
 }
 
 void send_error_to_Knob(ErrorCode error) {
@@ -397,20 +473,20 @@ void send_error_to_Knob(ErrorCode error) {
       Serial.println("HEPA filter missing-");
 #endif
       break;
-    case WATER_LEAK_DETECTED:
-      _errorStatus.waterLeakDetected = 1;
+    case TEMPERATURE_TOO_HIGH:
+      _errorStatus.temperatureHigh = 1;
       clearErrorFlag = false;
-      UART2.println("Water leak found");
+      UART2.println("Temperature Sensor");
 #ifdef DEBUG
-      Serial.println("Water leak found-");
+      Serial.println("Temperature too high-");
 #endif
       break;
-    case FLOAT_DETECTED:
-      _errorStatus.floatDetected = 1;
+    case TEMPERATURE_TOO_LOW:
+      _errorStatus.temperatureLow = 1;
       clearErrorFlag = false;
-      UART2.println("Water level low");
+      UART2.println("Temperature Sensor");
 #ifdef DEBUG
-      Serial.println("Water level low-");
+      Serial.println("Temperature too low-");
 #endif
       break;
     case POOR_WATER_QUALITY:
@@ -435,8 +511,7 @@ void send_error_to_Knob(ErrorCode error) {
 // =============================================================TASKS=============================================================
 void Serial_Handle_task(void *param) {
   for (;;) {
-    if(_ota.OTA_IDLE == _ota.otaState)
-    {
+    if (_ota.getStatus().state == OTA_MQTT::OTA_IDLE) {
 #ifdef NO_SENSOR
       handleSerialCommands();
 #endif
@@ -448,44 +523,30 @@ void Serial_Handle_task(void *param) {
 
 void warning_Handle_Task(void *param) {
   for (;;) {
-    if(_ota.OTA_IDLE == _ota.otaState)
-    {
-      if (limitsw_interruptFlag || digitalRead(LIMIT_SW_PIN) == LOW) {
+    if (_ota.getStatus().state == OTA_MQTT::OTA_IDLE) {
+      if (limitsw_state == LOW) {
         if (!digitalRead(LIMIT_SW_PIN)) {
           updatePWMVoltage(0);
           send_error_to_Knob(HEPA_FILTER_MISSING);
-          limitsw_interruptFlag = true;
           delay(500);
         } else {
-          limitsw_interruptFlag = false;
           _errorStatus.hepaFilterMissing = 0;
         }
       }
 
-      if(waterleak_interruptFlag || digitalRead(WATER_LEAK_PIN) == HIGH) {
-        delay(50);
-        if (digitalRead(WATER_LEAK_PIN)) {
-          updatePWMVoltage(0);
-          send_error_to_Knob(WATER_LEAK_DETECTED);
-          waterleak_interruptFlag = true;
-          delay(500);
-        } else {
-          waterleak_interruptFlag = false;
-          _errorStatus.waterLeakDetected = 0;
-        }
-      }
-
-      if (levelfloat_interruptFlag || digitalRead(LEVEL_FLOAT_PIN) == LOW) {
-        if (!digitalRead(LEVEL_FLOAT_PIN)) {
-          updatePWMVoltage(0);
-          send_error_to_Knob(FLOAT_DETECTED);
-          levelfloat_interruptFlag = true;
-          delay(500);
-        }
-        else {
-          levelfloat_interruptFlag = false;
-          _errorStatus.floatDetected = 0;
-        }
+      if (float1_state == LOW && float2_state == LOW) {
+        Serial.println("Water level is HIGH (> 75%)");
+        _errorStatus.waterLevelLow = 0;
+      } 
+      else if (float1_state == HIGH && float2_state == LOW) {
+        Serial.println("Water level is MEDIUM (25% - 75%)");
+        _errorStatus.waterLevelLow = 0;
+      } 
+      else if (float2_state == HIGH) {
+        Serial.println("Water level is LOW (< 25%)");
+        updatePWMVoltage(0);
+        send_error_to_Knob(WATER_LEVEL_LOW);
+        vTaskDelay(pdMS_TO_TICKS(500));
       }
 
       if (millis() - lastReadTimeSensor > SENSOR_READ_TIME) {
@@ -500,23 +561,37 @@ void warning_Handle_Task(void *param) {
         if (!tds) {
           send_error_to_Knob(POOR_WATER_QUALITY);
           delay(500);
-        }
-        else {
+        } else {
           _errorStatus.poorWaterQuality = 0;
         }
         if (!h2) {
           send_error_to_Knob(H2_LEAK_DETECTED);
           delay(500);
-        }
-        else {
+        } else {
           _errorStatus.h2LeakDetected = 0;
         }
 
-        if (_errorStatus.hepaFilterMissing || _errorStatus.waterLeakDetected || _errorStatus.floatDetected || _errorStatus.poorWaterQuality || _errorStatus.h2LeakDetected) {
+        temp_return_val = check_temperature();
+        if (temp_return_val == NORMAL_TEMPERATURE) {
+          _errorStatus.temperatureHigh = 0;
+          _errorStatus.temperatureLow = 0;
+        }
+        else {
+          if (temp_return_val == HIGH_TEMPERATURE) {
+            send_error_to_Knob(TEMPERATURE_TOO_HIGH);
+            delay(500);
+          }
+          else if (temp_return_val == LOW_TEMPERATURE) {
+            send_error_to_Knob(TEMPERATURE_TOO_LOW);
+            delay(500);
+          }
+        }
+
+        if (_errorStatus.hepaFilterMissing || _errorStatus.waterLevelLow || _errorStatus.poorWaterQuality || _errorStatus.h2LeakDetected
+         || _errorStatus.temperatureHigh || _errorStatus.temperatureLow) {
           String errorJSON = buildErrorJson(_errorStatus);
           mqtt_publish_message(ERROR_UPDATE, MAC_id.c_str(), errorJSON);
         }
-        
       }
     }
     vTaskDelay(pdMS_TO_TICKS(1));
@@ -525,9 +600,9 @@ void warning_Handle_Task(void *param) {
 
 void PumpControlTask(void *param) {
   for (;;) {
-    if (_ota.otaState == _ota.OTA_IDLE) {
+    if (_ota.getStatus().state == OTA_MQTT::OTA_IDLE) {
       // Điều khiển bơm nước và bơm không khí
-      if (h2 && tds && !levelfloat_interruptFlag && !limitsw_interruptFlag && !waterleak_interruptFlag && _run && _knob2Board.state) {
+      if (h2 && tds && !limitsw_state && float2_state && _run && _knob2Board.state) {
         digitalWrite(WATER_PUMP_PIN, 1);
         digitalWrite(AIR_PUMP_PIN, 1);
         // maybe call POST function here
@@ -562,7 +637,7 @@ void handleMQTTReceivedMessage(const JsonDocument &doc) {
 
   _board2Knob.state = doc["state"];
 
-  const char* t = doc["timer"];
+  const char *t = doc["timer"];
   if (t != nullptr) {
     strncpy(_board2Knob.timer, t, sizeof(_board2Knob.timer) - 1);
     _board2Knob.timer[sizeof(_board2Knob.timer) - 1] = '\0';
@@ -576,51 +651,50 @@ void handleMQTTReceivedMessage(const JsonDocument &doc) {
   Serial.println("KNOB timer: " + String(_board2Knob.timer));
   Serial.println("KNOB percent: " + String(_board2Knob.percent));
   Serial.println("KNOB type_machine: " + String(_board2Knob.typeMachine));
-  
+
   haveMessageViaMQTT = true;
   if (sendMQTTDataToKnobTaskHandle != NULL) {
     xTaskNotifyGive(sendMQTTDataToKnobTaskHandle);
   }
-
 }
 
-void parseKnobData(const char* input) {
+void parseKnobData(const char *input) {
   // Find the ':' character to skip the prefix "Data From Knob:"
-  const char* dataStart = strchr(input, ':');
+  const char *dataStart = strchr(input, ':');
   if (dataStart == NULL) {
     Serial.println("Invalid format: no ':' found");
     return;
   }
 
-  dataStart++; // Move past the ':' character
+  dataStart++;  // Move past the ':' character
 
   // Copy the substring after ':' into a local buffer (strtok modifies the string)
   char buffer[64];
   strncpy(buffer, dataStart, sizeof(buffer) - 1);
-  buffer[sizeof(buffer) - 1] = '\0'; // Ensure null-terminated string
+  buffer[sizeof(buffer) - 1] = '\0';  // Ensure null-terminated string
 
   // Use strtok to split the string by the '|' delimiter
-  char* token = strtok(buffer, "|");
+  char *token = strtok(buffer, "|");
   int index = 0;
 
   // Parse each token into the appropriate field in _knobData
   while (token != NULL) {
     switch (index) {
       case 0:
-        _knob2Board.state = atoi(token); // Convert string to integer
+        _knob2Board.state = atoi(token);  // Convert string to integer
         break;
       case 1:
-        strncpy(_knob2Board.timer, token, sizeof(_knob2Board.timer) - 1); // Copy timer string
+        strncpy(_knob2Board.timer, token, sizeof(_knob2Board.timer) - 1);  // Copy timer string
         _knob2Board.timer[sizeof(_knob2Board.timer) - 1] = '\0';
         break;
       case 2:
-        _knob2Board.percent = atof(token); // Convert string to float
+        _knob2Board.percent = atof(token);  // Convert string to float
         break;
       case 3:
-        _knob2Board.typeMachine = atof(token); // Convert string to float
+        _knob2Board.typeMachine = atof(token);  // Convert string to float
         break;
     }
-    token = strtok(NULL, "|"); // Move to the next token
+    token = strtok(NULL, "|");  // Move to the next token
     index++;
   }
 
@@ -652,9 +726,8 @@ void mqtt_publish_message(int topic_id, const char *mac_id, String message) {
   if (message != "") {
     _mqtt.publishMessage(topic, message.c_str());
   }
-  
+
   Serial.println(String(topic));
-  
 }
 
 void mqtt_subscribe(int topic_id, const char *mac_id) {
@@ -666,7 +739,7 @@ void mqtt_subscribe(int topic_id, const char *mac_id) {
   Serial.println(String(topic));
 }
 
-String buildKnobDataJson(const Knob_data_t& data) {
+String buildKnobDataJson(const Knob_data_t &data) {
   StaticJsonDocument<128> doc;
 
   doc["state"] = data.state;
@@ -679,13 +752,13 @@ String buildKnobDataJson(const Knob_data_t& data) {
   return jsonString;
 }
 
-String buildErrorJson(const Error_status_t& errorStatus) {
+String buildErrorJson(const Error_status_t &errorStatus) {
   StaticJsonDocument<256> doc;
   doc["HEPA_FILTER_MISSING"] = errorStatus.hepaFilterMissing ? 1 : 0;
-  doc["WATER_LEAK_DETECTED"] = errorStatus.waterLeakDetected ? 1 : 0;
-  doc["FLOAT_DETECTED"] = errorStatus.floatDetected ? 1 : 0;
   doc["POOR_WATER_QUALITY"] = errorStatus.poorWaterQuality ? 1 : 0;
   doc["H2_ABOVE_1_PERCENT"] = errorStatus.h2LeakDetected ? 1 : 0;
+  doc["WATER_LEVEL_LOW"] = errorStatus.waterLevelLow ? 1 : 0;
+  doc["TEMPERATURE_SENSOR"] = (errorStatus.temperatureHigh || errorStatus.temperatureLow) ? 1 : 0;
 
   String jsonString;
   serializeJson(doc, jsonString);

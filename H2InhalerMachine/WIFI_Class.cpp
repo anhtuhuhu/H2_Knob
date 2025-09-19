@@ -21,14 +21,14 @@ void WIFI::init() {
   scanAndSendAPs((char*)g_ret_list_ap);
 
   if (wifiTaskHandle == nullptr) {
-    xTaskCreate([](void*) {
+    xTaskCreatePinnedToCore([](void*) {
       while (true) {
         handleBLECommand();
         if (!isConnected) connect();
         else _ble.end();
         vTaskDelay(pdMS_TO_TICKS(3000));
       }
-    }, "wifi_loop", 8192, nullptr, 5, &wifiTaskHandle);
+    }, "wifi_loop", 8192, nullptr, 5, &wifiTaskHandle, 1);
   }
 
   _ble.begin();

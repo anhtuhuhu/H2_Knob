@@ -3,13 +3,20 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <H2InhallerMachine.h>
+#include "OTA_MQTT.h"
 
 typedef void (*MQTTMessageHandler)(const JsonDocument &doc);
+extern OTA_MQTT _ota;
+
 
 class MQTT {
 private:
   static void reconnectMQTT();
   static void mqttCallback(char *topic, byte *payload, unsigned int length);
+  static void handleOTAUpdate(String payload);
+  static void publishOTAStatus(void);
+  static void handleParameterUpdate(String payload, unsigned int length);
   static TaskHandle_t checkMQTTConnection;
   
   static void check_mqtt_connection(void *param);
@@ -23,4 +30,5 @@ public:
   void publishMessage(const char* publish_topic, const char* message);
   void subscribeTopic(const char* subscribe_topic);
 };
+extern MQTT _mqtt;
 #endif //_MQTT_H_
