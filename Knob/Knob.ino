@@ -6,14 +6,9 @@
 #include <Update.h>
 #include <ArduinoJson.h>
 
-#define VERSION "v1.8.0"
+#define VERSION "v16.9.1"
 
 //==================================================================================================
-#ifdef KNOB21
-#define GPIO_NUM_KNOB_PIN_A 6
-#define GPIO_NUM_KNOB_PIN_B 5
-#define GPIO_BUTTON_PIN GPIO_NUM_0
-#endif
 #ifdef KNOB13
 #define GPIO_NUM_KNOB_PIN_A 7
 #define GPIO_NUM_KNOB_PIN_B 6
@@ -35,7 +30,7 @@ ESP_Knob *knob;
 //=====================================================================
 uint8_t savedDataToSend = false;
 float percentH2FromKnob;
-float airFlowRate = 10;  // 10L/min
+float airFlowRate;  // 10L/min
 char timerFromKnob[10] = "00:00:00";
 bool isErrorScreenActive = false;
 TaskHandle_t countdown_task_handle = NULL;
@@ -87,7 +82,7 @@ static void LongPressUpCb(void *button_handle, void *usr_data) {
 String receivedString;  // Variable that receive data via Serial
 
 //==================================================Begin - NVS===================================================
-void save_data_to_nvs(char *timer, float *_h2_percent) {
+void save_str_to_nvs(const char *key, char *value) {
   nvs_handle_t nvs_handle;
   esp_err_t err;
 
@@ -97,21 +92,11 @@ void save_data_to_nvs(char *timer, float *_h2_percent) {
     return;
   }
 
-  const char *timer_key = "timerKnob";
-  const char *h2_percent_key = "h2Knob";
-
-  err = nvs_set_str(nvs_handle, timer_key, timer);
+  err = nvs_set_str(nvs_handle, key, value);
   if (err == ESP_OK) {
-    Serial.printf("Save timer: %s to NVS\n", timer);
+    Serial.printf("Save %s: %s to NVS\n", key, value);
   } else {
-    Serial.printf("Error saving timer: %s\n", esp_err_to_name(err));
-  }
-
-  err = nvs_set_i32(nvs_handle, h2_percent_key, (int)(*_h2_percent * 100));
-  if (err == ESP_OK) {
-    Serial.printf("Save H2Percent: %f to NVS\n", *_h2_percent);
-  } else {
-    Serial.printf("Error saving H2Percent: %s\n", esp_err_to_name(err));
+    Serial.printf("Error saving %s: %s\n", key, esp_err_to_name(err));
   }
 
   nvs_commit(nvs_handle);
@@ -119,7 +104,33 @@ void save_data_to_nvs(char *timer, float *_h2_percent) {
   nvs_close(nvs_handle);
 }
 
-void get_data_from_nvs(char *timer, float *_h2_percent) {
+void save_value_to_nvs(const char* key, int32_t value) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err;
+
+    err = nvs_open("data", NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+        return;
+    }
+
+    err = nvs_set_i32(nvs_handle, key, value);
+    if (err == ESP_OK) {
+        Serial.printf("Save %s: %ld to NVS\n", key, (long)value);
+    } else {
+        Serial.printf("Error saving %s: %s\n", key, esp_err_to_name(err));
+    }
+
+    err = nvs_commit(nvs_handle);
+    if (err != ESP_OK) {
+        Serial.printf("Error committing NVS: %s\n", esp_err_to_name(err));
+    }
+
+    nvs_close(nvs_handle);
+}
+
+
+void get_str_from_nvs(const char *key, char *value, size_t max_length) {
   nvs_handle_t nvs_handle;
   esp_err_t err;
 
@@ -129,138 +140,221 @@ void get_data_from_nvs(char *timer, float *_h2_percent) {
     return;
   }
 
-  const char *timer_key = "timerKnob";
-  const char *h2_percent_key = "h2Knob";
-  size_t timer_len = TIMER_MAX_LENGTH;
-
-  err = nvs_get_str(nvs_handle, timer_key, timer, &timer_len);
+  size_t required_size = max_length;
+  err = nvs_get_str(nvs_handle, key, value, &required_size);
   if (err == ESP_OK) {
-    Serial.printf("Read timer: %s\n", timer);
+    Serial.printf("Read %s: %s\n", key, value);
   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-    Serial.println("Timer not found in NVS.");
-    timer[0] = '\0';
+    Serial.printf("%s not found in NVS.\n", key);
+    value[0] = '\0'; // Set to empty string if not found
   } else {
-    Serial.printf("Error reading timer: %s\n", esp_err_to_name(err));
-    timer[0] = '\0';
-  }
-
-  int32_t h2_int_value = 0;
-  err = nvs_get_i32(nvs_handle, h2_percent_key, &h2_int_value);
-  *_h2_percent = (float)(h2_int_value / 100.0f);
-
-  if (err == ESP_OK) {
-    Serial.printf("Read H2Percent: %f\n", *_h2_percent);
-  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-    Serial.println("H2Percent not found in NVS.");
-    *_h2_percent = 0.0f;
-  } else {
-    Serial.printf("Error reading H2Percent: %s\n", esp_err_to_name(err));
-    *_h2_percent = 0.0f;
+    Serial.printf("Error reading %s: %s\n", key, esp_err_to_name(err));
+    value[0] = '\0'; // Set to empty string on error
   }
 
   nvs_close(nvs_handle);
 }
 
-void save_version_to_nvs(char* versionBoard, char* versionKnob) {
-  nvs_handle_t nvs_handle;
-  esp_err_t err;
+void get_value_from_nvs(const char* key, int32_t *value) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err;
 
-  err = nvs_open("version", NVS_READWRITE, &nvs_handle);
-  if (err != ESP_OK) {
-    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
-    return;
-  }
+    *value = 0;
 
-  const char *versionBoard_key = "versionBoard";
-  const char *versionKnob_key = "versionKnob";
+    err = nvs_open("data", NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+        return;
+    }
 
-  err = nvs_set_str(nvs_handle, versionBoard_key, versionBoard);
-  if (err == ESP_OK) {
-    Serial.printf("Save version Board: %s to NVS\n", versionBoard);
-  } else {
-    Serial.printf("Error saving version Board: %s\n", esp_err_to_name(err));
-  }
+    err = nvs_get_i32(nvs_handle, key, value);
+    if (err == ESP_OK) {
+        Serial.printf("Read %s: %ld\n", key, (long)*value);
+    } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+        Serial.printf("%s not found in NVS (set to 0 by default)\n", key);
+        *value = 0;
+    } else {
+        Serial.printf("Error reading %s: %s\n", key, esp_err_to_name(err));
+        *value = 0;
+    }
 
-  err = nvs_set_str(nvs_handle, versionKnob_key, versionKnob);
-  if (err == ESP_OK) {
-    Serial.printf("Save version Knob: %s to NVS\n", versionKnob);
-  } else {
-    Serial.printf("Error saving version Knob: %s\n", esp_err_to_name(err));
-  }
-
-  nvs_commit(nvs_handle);
-
-  nvs_close(nvs_handle);
+    nvs_close(nvs_handle);
 }
 
-void get_version_from_nvs(char* versionBoard, char* versionKnob) {
-  nvs_handle_t nvs_handle;
-  esp_err_t err;
+// void save_data_to_nvs(char *timer, float *_h2_percent) {
+//   nvs_handle_t nvs_handle;
+//   esp_err_t err;
 
-  err = nvs_open("version", NVS_READONLY, &nvs_handle);
-  if (err != ESP_OK) {
-    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
-    return;
-  }
+//   err = nvs_open("data", NVS_READWRITE, &nvs_handle);
+//   if (err != ESP_OK) {
+//     Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+//     return;
+//   }
 
-  const char *versionBoard_key = "versionBoard";
-  const char *versionKnob_key = "versionKnob";
-  size_t version_len = VERSION_MAX_LENGTH;
+//   const char *timer_key = "timerKnob";
+//   const char *h2_percent_key = "h2Knob";
 
-  err = nvs_get_str(nvs_handle, versionBoard_key, versionBoard, &version_len);
-  if (err == ESP_OK) {
-    Serial.printf("Read version Board: %s\n", versionBoard);
-  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-    Serial.println("Version Board not found in NVS.");
-    versionBoard[0] = '\0';
-  } else {
-    Serial.printf("Error reading version Board: %s\n", esp_err_to_name(err));
-    versionBoard[0] = '\0';
-  }
+//   err = nvs_set_str(nvs_handle, timer_key, timer);
+//   if (err == ESP_OK) {
+//     Serial.printf("Save timer: %s to NVS\n", timer);
+//   } else {
+//     Serial.printf("Error saving timer: %s\n", esp_err_to_name(err));
+//   }
 
-  err = nvs_get_str(nvs_handle, versionKnob_key, versionKnob, &version_len);
-  if (err == ESP_OK) {
-    Serial.printf("Read version Knob: %s\n", versionKnob);
-  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-    Serial.println("Version Knob not found in NVS.");
-    versionKnob[0] = '\0';
-  } else {
-    Serial.printf("Error reading version Knob: %s\n", esp_err_to_name(err));
-    versionKnob[0] = '\0';
-  }
+//   err = nvs_set_i32(nvs_handle, h2_percent_key, (int)(*_h2_percent * 100));
+//   if (err == ESP_OK) {
+//     Serial.printf("Save H2Percent: %f to NVS\n", *_h2_percent);
+//   } else {
+//     Serial.printf("Error saving H2Percent: %s\n", esp_err_to_name(err));
+//   }
 
-  nvs_close(nvs_handle);
-}
+//   nvs_commit(nvs_handle);
 
-void save_calib_data_to_nvs(char *airFlowRate_str) {
-  nvs_handle_t nvs_handle;
-  esp_err_t err;
+//   nvs_close(nvs_handle);
+// }
 
-  err = nvs_open("calib", NVS_READWRITE, &nvs_handle);
-  if (err != ESP_OK) {
-    Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
-    return;
-  }
+// void get_data_from_nvs(char *timer, float *_h2_percent) {
+//   nvs_handle_t nvs_handle;
+//   esp_err_t err;
 
-  const char *airFlowRate_key = "airFlowRate";
+//   err = nvs_open("data", NVS_READONLY, &nvs_handle);
+//   if (err != ESP_OK) {
+//     Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+//     return;
+//   }
 
-  err = nvs_set_str(nvs_handle, airFlowRate_key, airFlowRate_str);
-  if (err == ESP_OK) {
-    Serial.printf("Save airFlowRate: %s to NVS\n", airFlowRate_str);
-  } else {
-    Serial.printf("Error saving airFlowRate: %s\n", esp_err_to_name(err));
-  }
+//   const char *timer_key = "timerKnob";
+//   const char *h2_percent_key = "h2Knob";
+//   size_t timer_len = TIMER_MAX_LENGTH;
 
-  nvs_commit(nvs_handle);
+//   err = nvs_get_str(nvs_handle, timer_key, timer, &timer_len);
+//   if (err == ESP_OK) {
+//     Serial.printf("Read timer: %s\n", timer);
+//   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+//     Serial.println("Timer not found in NVS.");
+//     timer[0] = '\0';
+//   } else {
+//     Serial.printf("Error reading timer: %s\n", esp_err_to_name(err));
+//     timer[0] = '\0';
+//   }
 
-  nvs_close(nvs_handle);
-}
+//   int32_t h2_int_value = 0;
+//   err = nvs_get_i32(nvs_handle, h2_percent_key, &h2_int_value);
+//   *_h2_percent = (float)(h2_int_value / 100.0f);
+
+//   if (err == ESP_OK) {
+//     Serial.printf("Read H2Percent: %f\n", *_h2_percent);
+//   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+//     Serial.println("H2Percent not found in NVS.");
+//     *_h2_percent = 0.0f;
+//   } else {
+//     Serial.printf("Error reading H2Percent: %s\n", esp_err_to_name(err));
+//     *_h2_percent = 0.0f;
+//   }
+
+//   nvs_close(nvs_handle);
+// }
+
+// void save_version_to_nvs(char* versionBoard, char* versionKnob) {
+//   nvs_handle_t nvs_handle;
+//   esp_err_t err;
+
+//   err = nvs_open("version", NVS_READWRITE, &nvs_handle);
+//   if (err != ESP_OK) {
+//     Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+//     return;
+//   }
+
+//   const char *versionBoard_key = "versionBoard";
+//   const char *versionKnob_key = "versionKnob";
+
+//   err = nvs_set_str(nvs_handle, versionBoard_key, versionBoard);
+//   if (err == ESP_OK) {
+//     Serial.printf("Save version Board: %s to NVS\n", versionBoard);
+//   } else {
+//     Serial.printf("Error saving version Board: %s\n", esp_err_to_name(err));
+//   }
+
+//   err = nvs_set_str(nvs_handle, versionKnob_key, versionKnob);
+//   if (err == ESP_OK) {
+//     Serial.printf("Save version Knob: %s to NVS\n", versionKnob);
+//   } else {
+//     Serial.printf("Error saving version Knob: %s\n", esp_err_to_name(err));
+//   }
+
+//   nvs_commit(nvs_handle);
+
+//   nvs_close(nvs_handle);
+// }
+
+// void get_version_from_nvs(char* versionBoard, char* versionKnob) {
+//   nvs_handle_t nvs_handle;
+//   esp_err_t err;
+
+//   err = nvs_open("version", NVS_READONLY, &nvs_handle);
+//   if (err != ESP_OK) {
+//     Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+//     return;
+//   }
+
+//   const char *versionBoard_key = "versionBoard";
+//   const char *versionKnob_key = "versionKnob";
+//   size_t version_len = VERSION_MAX_LENGTH;
+
+//   err = nvs_get_str(nvs_handle, versionBoard_key, versionBoard, &version_len);
+//   if (err == ESP_OK) {
+//     Serial.printf("Read version Board: %s\n", versionBoard);
+//   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+//     Serial.println("Version Board not found in NVS.");
+//     versionBoard[0] = '\0';
+//   } else {
+//     Serial.printf("Error reading version Board: %s\n", esp_err_to_name(err));
+//     versionBoard[0] = '\0';
+//   }
+
+//   err = nvs_get_str(nvs_handle, versionKnob_key, versionKnob, &version_len);
+//   if (err == ESP_OK) {
+//     Serial.printf("Read version Knob: %s\n", versionKnob);
+//   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+//     Serial.println("Version Knob not found in NVS.");
+//     versionKnob[0] = '\0';
+//   } else {
+//     Serial.printf("Error reading version Knob: %s\n", esp_err_to_name(err));
+//     versionKnob[0] = '\0';
+//   }
+
+//   nvs_close(nvs_handle);
+// }
+
+// void save_calib_data_to_nvs(char *airFlowRate_str) {
+//   nvs_handle_t nvs_handle;
+//   esp_err_t err;
+
+//   err = nvs_open("calib", NVS_READWRITE, &nvs_handle);
+//   if (err != ESP_OK) {
+//     Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
+//     return;
+//   }
+
+//   const char *airFlowRate_key = "airFlowRate";
+
+//   err = nvs_set_str(nvs_handle, airFlowRate_key, airFlowRate_str);
+//   if (err == ESP_OK) {
+//     Serial.printf("Save airFlowRate: %s to NVS\n", airFlowRate_str);
+//   } else {
+//     Serial.printf("Error saving airFlowRate: %s\n", esp_err_to_name(err));
+//   }
+
+//   nvs_commit(nvs_handle);
+
+//   nvs_close(nvs_handle);
+// }
 
 void get_calib_data_to_nvs(char *airFlowRate_str) {
   nvs_handle_t nvs_handle;
   esp_err_t err;
 
-  err = nvs_open("calib", NVS_READONLY, &nvs_handle);
+  err = nvs_open("data", NVS_READONLY, &nvs_handle);
   if (err != ESP_OK) {
     Serial.printf("Error opening NVS: %s\n", esp_err_to_name(err));
     return;
@@ -356,7 +450,7 @@ void stop_countdown() {
   lvgl_port_lock(-1);
   reset_ui();
   lvgl_port_unlock();
-  save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
+  // save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
 
   stop_countdown_flag = true;  // Bật flag dừng
   if (countdown_task_handle != NULL) {
@@ -568,32 +662,11 @@ void OTA_Task(void *param) {
 }
 
 void setup() {
-#ifdef IM
-  pinMode(IM1, OUTPUT);
-  digitalWrite(IM1, HIGH);
-#ifdef BOARD_VIEWE_ESP_S3_Touch_LCD_35_V2
-  pinMode(IM0, OUTPUT);
-  digitalWrite(IM0, HIGH);
-#endif
-#ifndef BOARD_VIEWE_ESP_S3_Touch_LCD_35_V2
-  pinMode(IM0, OUTPUT);
-  digitalWrite(IM0, LOW);
-#endif
-#endif
   DEBUG_SERIAL.begin(115200);
 
   ESP_Panel *panel = new ESP_Panel();
   panel->init();
-#if LVGL_PORT_AVOID_TEAR
-  // When avoid tearing function is enabled, configure the bus according to the LVGL configuration
-  ESP_PanelBus *lcd_bus = panel->getLcd()->getBus();
-#if ESP_PANEL_LCD_BUS_TYPE == ESP_PANEL_BUS_TYPE_RGB
-  static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbBounceBufferSize(LVGL_PORT_RGB_BOUNCE_BUFFER_SIZE);
-  static_cast<ESP_PanelBus_RGB *>(lcd_bus)->configRgbFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
-#elif ESP_PANEL_LCD_BUS_TYPE == ESP_PANEL_BUS_TYPE_MIPI_DSI
-  static_cast<ESP_PanelBus_DSI *>(lcd_bus)->configDpiFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
-#endif
-#endif
+
   panel->begin();
 #ifdef KNOB
   DEBUG_SERIAL.println(F("Initialize Knob device"));
@@ -606,14 +679,12 @@ void setup() {
   btn->attachSingleClickEventCb(&SingleClickCb, NULL);
   btn->attachLongPressHoldEventCb(&LongPressHoldCb, NULL);
   btn->attachLongPressUpEventCb(&LongPressUpCb, NULL);
-  // btn->attachDoubleClickEventCb(&DoubleClickCb, NULL);
-  // btn->attachLongPressStartEventCb(&LongPressStartCb, NULL);
-#endif
 
+#endif
   lvgl_port_init(panel->getLcd(), panel->getTouch());
   lvgl_port_lock(-1);
   ui_init();
-
+  esp_log_level_set("*", ESP_LOG_INFO);
   update_selection_ui(knob_state);
 
   DEBUG_SERIAL.print("VERSION");
@@ -628,8 +699,6 @@ void setup() {
   nvs_flash_init();
   DEBUG_SERIAL.println("Knob OTA Receiver Starting");
   
-  // xKnobIDLESemaphore = xSemaphoreCreateBinary();
-
   // Tạo task OTA
   xTaskCreate(OTA_Task, "OTA_Task", 10000, NULL, 10, NULL);
   xTaskCreate(Send_task, "Send_task", 4096, NULL, 5, NULL);
@@ -656,7 +725,9 @@ void handleReceivedData(const String &data) {
 
     Serial.print("Extracted version: ");
     Serial.println(versionBoard);
-    save_version_to_nvs(versionBoard, versionKnob);
+    // save_version_to_nvs(versionBoard, versionKnob);
+    save_str_to_nvs(VERSION_BOARD_KEY, versionBoard);
+    save_str_to_nvs(VERSION_KNOB_KEY, versionKnob);
     lvgl_port_unlock();
     return;
   }
@@ -736,7 +807,7 @@ void handleReceivedData(const String &data) {
 
         if ((have_set_timer) && countdown_state == COUNTDOWN_STOP) // Chỉ xử lý nếu đã đặt thời gian
         {
-          save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
+          // save_data_to_nvs(timerFromKnob, &percentH2FromKnob);
           start_countdown();
           start_animation(anim_1, arc1);
           start_animation(anim_2, arc2);

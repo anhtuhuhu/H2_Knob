@@ -46,7 +46,7 @@
  * LVGL timer handle task related parameters, can be adjusted by users
  *
  */
-#define LVGL_PORT_TASK_MAX_DELAY_MS             (150)       // The maximum delay of the LVGL timer task, in milliseconds
+#define LVGL_PORT_TASK_MAX_DELAY_MS             (10)       // The maximum delay of the LVGL timer task, in milliseconds
 #define LVGL_PORT_TASK_MIN_DELAY_MS             (2)         // The minimum delay of the LVGL timer task, in milliseconds
 #define LVGL_PORT_TASK_STACK_SIZE               (8 * 1024)  // The stack size of the LVGL timer task, in bytes
 #define LVGL_PORT_TASK_PRIORITY                 (10)         // The priority of the LVGL timer task

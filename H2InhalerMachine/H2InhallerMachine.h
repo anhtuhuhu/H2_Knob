@@ -5,41 +5,108 @@
 
 #define VERSION "v3.9.1"
 
-#define UART2_RX_PIN GPIO_NUM_1
-#define UART2_TX_PIN GPIO_NUM_2
+#define OLD 0
+#define NEW 1
+#define BOARD OLD // 0: cũ 1 mới
 
-#define TMP36_SHUTDOWN_PIN GPIO_NUM_4
-#define TEMP_HUMI_PIN GPIO_NUM_8
+#if BOARD == NEW
+  #define UART2_RX_PIN GPIO_NUM_1
+  #define UART2_TX_PIN GPIO_NUM_2
 
-#define AIR_PUMP_PIN GPIO_NUM_5
-#define WATER_PUMP_PIN GPIO_NUM_45
+  #define TMP36_SHUTDOWN_PIN GPIO_NUM_4
+  #define TEMP_HUMI_PIN GPIO_NUM_8
 
-#define LIMIT_SW_PIN GPIO_NUM_6
-#define FLOW_PIN GPIO_NUM_9
+  #define WATER_PUMP_PIN GPIO_NUM_45
+  #define AIR_PUMP_PIN GPIO_NUM_5
+  #define ALERT_AIR_PUMP_PIN GPIO_NUM_42
 
-#define LED_G_PIN GPIO_NUM_10
-#define LED_R_PIN GPIO_NUM_11
+  #define LIMIT_SW_PIN GPIO_NUM_6
+  #define FLOW_PIN GPIO_NUM_9
 
-#define EN_LOAD_PUMP_PIN GPIO_NUM_12
-#define EN_LOAD_FAN_PIN GPIO_NUM_16
-#define ENABLE_FAN_PIN GPIO_NUM_21
-#define ENB_POWER_PIN GPIO_NUM_46
+  #define LED_G_PIN GPIO_NUM_10
+  #define LED_R_PIN GPIO_NUM_11
 
-#define LATCH_LOAD_FAN_PIN GPIO_NUM_13
-#define LATCH_LOAD_PUMP_PIN GPIO_NUM_7
+  //Fan
+  #define EN_FAN_PIN GPIO_NUM_21
+  #define ALERT_FAN_PIN GPIO_NUM_14 // chưa dùng. công dụng sẽ kích xuống khi quá dòng
 
-#define LOAD_FAN_PIN GPIO_NUM_14
-#define LOAD_PUMP_PIN GPIO_NUM_42
+  //PEM
+  #define ENB_PWR_PEM_PIN GPIO_NUM_46
+  #define CUR_PEM_PIN GPIO_NUM_10
 
-#define H2_LEAK_PIN GPIO_NUM_3
-#define WATER_POOR_PIN GPIO_NUM_15
+  // FLOAT
+  #define LEVEL_FLOAT1_PIN GPIO_NUM_47
+  #define LEVEL_FLOAT2_PIN GPIO_NUM_48
 
-#define LEVEL_FLOAT1_PIN GPIO_NUM_47
-#define LEVEL_FLOAT2_PIN GPIO_NUM_48
+  #define I2C_SDA_PIN GPIO_NUM_18
+  #define I2C_SCL_PIN GPIO_NUM_17
 
-#define I2C_SDA_PIN GPIO_NUM_18
-#define I2C_SCL_PIN GPIO_NUM_17
+  typedef enum {
+    TDS_ADS_CHANNEL = 1,
+    H2_SENSOR_1_ADS_CHANNEL,
+    H2_SENSOR_2_ADS_CHANNEL
+  } ads_channel_t;
 
+  // Data structure for sensor readings
+  typedef struct
+  {
+    uint32_t tds_data;
+    uint32_t h2_data_1;
+    uint32_t h2_data_2;
+  } ads_data_t;
+
+
+#elif BOARD == OLD
+  #define UART2_RX_PIN GPIO_NUM_44
+  #define UART2_TX_PIN GPIO_NUM_43
+
+  #define TMP36_SHUTDOWN_PIN GPIO_NUM_NC
+  #define TEMP_HUMI_PIN GPIO_NUM_NC
+
+  #define AIR_PUMP_PIN GPIO_NUM_5
+  #define WATER_PUMP_PIN GPIO_NUM_4
+  #define ALERT_AIR_PUMP_PIN GPIO_NUM_NC
+
+  #define LIMIT_SW_PIN GPIO_NUM_6
+  #define FLOW_PIN GPIO_NUM_NC
+
+  #define LED_G_PIN GPIO_NUM_NC
+  #define LED_R_PIN GPIO_NUM_NC
+
+  //Fan
+  #define EN_FAN_PIN GPIO_NUM_NC
+  #define ALERT_FAN_PIN GPIO_NUM_NC // chưa dùng. công dụng sẽ kích xuống khi quá dòng
+
+  //PEM
+  #define PWM_PEM_PIN GPIO_NUM_16
+  #define ENB_PWR_PEM_PIN GPIO_NUM_NC
+  #define CUR_PEM_PIN GPIO_NUM_NC
+
+  // FLOAT
+  #define LEVEL_FLOAT1_PIN GPIO_NUM_NC
+  #define LEVEL_FLOAT2_PIN GPIO_NUM_7
+
+  #define I2C_SDA_PIN GPIO_NUM_18
+  #define I2C_SCL_PIN GPIO_NUM_17
+
+  // ADS channels enumeration
+  typedef enum {
+    PRESSURE_ADS_CHANNEL,
+    TDS_ADS_CHANNEL,
+    H2_SENSOR_ADS_CHANNEL,
+    POTEN_ADS_CHANNEL
+  } ads_channel_t;
+
+  // Data structure for sensor readings
+  typedef struct
+  {
+    uint32_t pressure_data;
+    uint32_t tds_data;
+    uint32_t h2_data;
+    uint32_t poten_data;
+  } ads_data_t;
+
+#endif
 
 #define DEBOUNCE_TIME_MS 10
 
@@ -54,6 +121,10 @@
 #define TEMPERATURE_UPPER_THRESHOLD 50
 #define TEMPERATURE_LOWER_THRESHOLD 15
 
+#define H2_SENSOR_THRESHOLD 11000
+
+#define TDS_THRESHOLD 5
+
 #define VREF 5.0
 #define MAX_STEPS 128
 
@@ -61,24 +132,9 @@
 
 // #define NO_SENSOR
 
-// ADS channels enumeration
-typedef enum {
-  TDS_ADS_CHANNEL = 1,
-  H2_SENSOR_1_ADS_CHANNEL,
-  H2_SENSOR_2_ADS_CHANNEL
-} ads_channel_t;
-
-// Data structure for sensor readings
-typedef struct
-{
-  uint32_t tds_data;
-  uint32_t h2_data_1;
-  uint32_t h2_data_2;
-} ads_data_t;
-
 typedef enum {
   HEPA_FILTER_MISSING = 0,
-  POOR_WATER_QUALITY,
+  WATER_PURITY_ISSUE,
   H2_LEAK_DETECTED,
   WATER_LEVEL_LOW,
   TEMPERATURE_TOO_HIGH,
@@ -96,7 +152,7 @@ typedef struct {
   uint8_t waterLevelLow:1;
   uint8_t temperatureHigh:1;
   uint8_t temperatureLow:1;
-  uint8_t poorWaterQuality:1;
+  uint8_t waterPurityIssue:1;
   uint8_t h2LeakDetected:1;
 } Error_status_t;
 
